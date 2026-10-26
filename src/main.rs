@@ -27,14 +27,15 @@ fn main() -> eframe::Result<()> {
     let path = config_path();
     let config = Config::load(&path);
     let size = config.window.unwrap_or([1280.0, 800.0]);
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("GiGit")
-            .with_app_id("gigit")
-            .with_inner_size(size)
-            .with_min_inner_size([820.0, 520.0]),
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("GiGit")
+        .with_app_id("gigit")
+        .with_inner_size(size)
+        .with_min_inner_size([820.0, 520.0]);
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/gigit-256.png")) {
+        viewport = viewport.with_icon(icon);
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     eframe::run_native(
         "GiGit",
         options,

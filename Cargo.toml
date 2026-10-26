@@ -3,9 +3,12 @@ name = "gigit"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Client git graphique, rapide et convivial / A friendly graphical git client"
+description = "Client git graphique inspiré d'ungit / A friendly graphical git client inspired by ungit"
 license = "MIT"
 authors = ["mawena <gamligocharles2@gmail.com>"]
+readme = "README.md"
+keywords = ["git", "gui", "ungit", "egui"]
+categories = ["development-tools"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -23,3 +26,26 @@ toml = "1.1.8"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[package.metadata.deb]
+maintainer = "mawena <gamligocharles2@gmail.com>"
+copyright = "2026, mawena <gamligocharles2@gmail.com>"
+section = "vcs"
+priority = "optional"
+depends = "$auto, git (>= 1:2.43)"
+extended-description = """\
+GiGit is a fast native git client inspired by ungit: keep a list of \
+repositories in a sidebar, browse an ungit-style commit graph, stage files, \
+hunks or single lines, commit, amend, fetch, pull and push. \
+French and English interface, several colour themes."""
+assets = [
+    ["target/release/gigit", "usr/bin/", "755"],
+    ["assets/gigit.desktop", "usr/share/applications/", "644"],
+    ["assets/gigit-256.png", "usr/share/icons/hicolor/256x256/apps/gigit.png", "644"],
+    ["assets/gigit.svg", "usr/share/icons/hicolor/scalable/apps/gigit.svg", "644"],
+    ["README.md", "usr/share/doc/gigit/README.md", "644"],
+]
