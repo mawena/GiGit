@@ -47,5 +47,6 @@ assets = [
     ["assets/gigit-256.png", "usr/share/icons/hicolor/256x256/apps/gigit.png", "644"],
     ["assets/gigit.svg", "usr/share/icons/hicolor/scalable/apps/gigit.svg", "644"],
     ["README.md", "usr/share/doc/gigit/README.md", "644"],
+    ["CHANGELOG.md", "usr/share/doc/gigit/CHANGELOG.md", "644"],
     ["assets/fonts/OFL.txt", "usr/share/doc/gigit/fonts-OFL.txt", "644"],
 ]
