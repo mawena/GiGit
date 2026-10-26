@@ -231,9 +231,20 @@ impl AppState {
                     b.ahead = snap.status.branch.ahead;
                     b.behind = snap.status.branch.behind;
                 }
-                // Keep the open diff in sync with the work tree.
+                // Keep the open diff in sync with the work tree, or close it when the file
+                // no longer has changes on that side.
                 if let Some((file, side)) = v.selected_file.clone() {
-                    v.worker.send(Job::Diff { path: file, side });
+                    let still_there = match side {
+                        DiffSide::Staged => snap.status.staged().any(|e| e.path == file),
+                        DiffSide::Unstaged => snap.status.unstaged().any(|e| e.path == file),
+                    };
+                    if still_there {
+                        v.worker.send(Job::Diff { path: file, side });
+                    } else {
+                        v.selected_file = None;
+                        v.diff = None;
+                        v.line_sel.clear();
+                    }
                 }
                 v.snapshot = Some(snap);
                 v.loading_more = false;
@@ -423,5 +434,20 @@ mod tests {
         assert_eq!(b.branch.as_deref(), Some("main"));
         assert!(b.dirty);
         assert_eq!(compute_badge(Path::new("/nope/x")).probe, Some(RepoProbe::Missing));
+    }
+
+    #[test]
+    fn selected_file_cleared_when_it_leaves_the_side() {
+        let (_d, mut s) = state();
+        let (_r, repo) = temp_repo();
+        s.add_folder(repo);
+        let path = s.open.as_ref().unwrap().path.clone();
+        let v = s.open.as_mut().unwrap();
+        v.selected_file = Some(("gone.txt".into(), DiffSide::Unstaged));
+        v.line_sel.insert((0, 1));
+        s.handle_result(&path, JobResult::Snapshot(Snapshot::default()));
+        let v = s.open.as_ref().unwrap();
+        assert_eq!(v.selected_file, None);
+        assert!(v.line_sel.is_empty());
     }
 }

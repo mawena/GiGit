@@ -1,6 +1,9 @@
 //! egui front-end.
 
+mod changes;
+mod commit_detail;
 mod dialogs;
+mod diff_view;
 mod graph_view;
 mod sidebar;
 mod toolbar;
@@ -104,12 +107,17 @@ impl eframe::App for GigitApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         sidebar::show(self, ui);
+        changes::show(&mut self.state, ui);
         toolbar::show(&mut self.state, ui);
         dialogs::error_banner(&mut self.state, ui);
         let p = theme::palette(self.state.theme);
         egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg).inner_margin(6)).show(ui, |ui| {
             if self.state.open.is_none() {
                 dialogs::empty_state(self, ui);
+            } else if self.state.open.as_ref().is_some_and(|v| v.detail_file.is_some()) {
+                diff_view::show_commit_file(&mut self.state, ui);
+            } else if self.state.open.as_ref().is_some_and(|v| v.selected_file.is_some()) {
+                diff_view::show_file(&mut self.state, ui);
             } else {
                 graph_view::show(&mut self.state, ui);
             }
