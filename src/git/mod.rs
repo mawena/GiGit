@@ -43,6 +43,8 @@ fn build_command(repo: &Path, args: &[&str], opts: &RunOpts) -> Command {
         .args(args)
         // No askpass bridge yet: a credential prompt must fail fast, never hang.
         .env("GIT_TERMINAL_PROMPT", "0")
+        // Paths are file names, never glob patterns (`f[1].txt` must not match `f1.txt`).
+        .env("GIT_LITERAL_PATHSPECS", "1")
         .stdin(if opts.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -163,6 +165,7 @@ mod tests {
         let plain = build_command(p, &["status"], &RunOpts::default());
         assert_eq!(env_of(&plain, "GIT_TERMINAL_PROMPT").as_deref(), Some("0"));
         assert_eq!(env_of(&plain, "GIT_OPTIONAL_LOCKS"), None);
+        assert_eq!(env_of(&plain, "GIT_LITERAL_PATHSPECS").as_deref(), Some("1"));
         let ro = build_command(p, &["status"], &RunOpts { read_only: true, ..Default::default() });
         assert_eq!(env_of(&ro, "GIT_OPTIONAL_LOCKS").as_deref(), Some("0"));
     }

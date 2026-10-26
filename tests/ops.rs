@@ -217,3 +217,37 @@ fn force_push_with_lease() {
     let br = status(&repo).unwrap().branch;
     assert_eq!((br.ahead, br.behind), (0, 0));
 }
+
+#[test]
+fn bracket_paths_are_literal() {
+    let (_d, repo) = temp_repo();
+    write(&repo, "f1.txt", "one\n");
+    write(&repo, "f[1].txt", "bracket\n");
+    commit_all(&repo, "init");
+    write(&repo, "f1.txt", "one EDITED, precious\n");
+    write(&repo, "f[1].txt", "bracket edited\n");
+    let st = status(&repo).unwrap();
+    let target: Vec<_> = st.unstaged().filter(|e| e.path == "f[1].txt").cloned().collect();
+    discard_paths(&repo, &target).unwrap();
+    assert_eq!(std::fs::read_to_string(repo.join("f1.txt")).unwrap(), "one EDITED, precious\n");
+    assert_eq!(std::fs::read_to_string(repo.join("f[1].txt")).unwrap(), "bracket\n");
+    write(&repo, "f[1].txt", "bracket edited again\n");
+    stage_paths(&repo, &["f[1].txt".into()]).unwrap();
+    assert_eq!(staged(&repo), ["f[1].txt"]);
+    let d = diff_file(&repo, "f[1].txt", DiffSide::Staged).unwrap().unwrap();
+    assert_eq!(d.path(), "f[1].txt");
+}
+
+#[test]
+fn clean_of_star_named_file_deletes_only_it() {
+    let (_d, repo) = temp_repo();
+    write(&repo, "base", "x\n");
+    commit_all(&repo, "init");
+    write(&repo, "*", "star\n");
+    write(&repo, "other.txt", "keep me\n");
+    let st = status(&repo).unwrap();
+    let star: Vec<_> = st.unstaged().filter(|e| e.path == "*").cloned().collect();
+    discard_paths(&repo, &star).unwrap();
+    assert!(!repo.join("*").exists());
+    assert!(repo.join("other.txt").exists());
+}
