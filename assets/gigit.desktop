@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=GiGit
+GenericName=Git client
+GenericName[fr]=Client git
+Comment=Graphical git client: visualise and manage your repositories
+Comment[fr]=Client git graphique : visualisez et gérez vos dépôts
+Exec=gigit %F
+Icon=gigit
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;version;control;ungit;
+StartupWMClass=gigit
