@@ -76,6 +76,11 @@ impl RepoWorker {
         RepoWorker { repo, tx, busy }
     }
 
+    /// A handle other threads (e.g. the file watcher) can use to queue jobs.
+    pub fn sender(&self) -> Sender<Job> {
+        self.tx.clone()
+    }
+
     pub fn send(&self, job: Job) {
         let _ = self.tx.send(job);
     }
