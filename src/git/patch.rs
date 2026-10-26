@@ -136,8 +136,13 @@ pub fn build_patch(file: &FileDiff, sel: &LineSel, mode: PatchMode) -> Option<Ve
         let out = fix_final_newline(out);
         let old_len = out.iter().filter(|o| o.0 != '+').count() as i64;
         let new_len = out.iter().filter(|o| o.0 != '-').count() as i64;
-        let new_start = i64::from(hunk.old_start) + offset;
-        body.extend_from_slice(format!("@@ -{},{old_len} +{new_start},{new_len} @@\n", hunk.old_start).as_bytes());
+        // Anchor on the side git will search: the old side when applying forward, the new side
+        // (the real current content, including unselected earlier hunks) when applying in reverse.
+        let (old_start, new_start) = match mode {
+            PatchMode::Forward => (i64::from(hunk.old_start), i64::from(hunk.old_start) + offset),
+            PatchMode::Reverse => (i64::from(hunk.new_start) - offset, i64::from(hunk.new_start)),
+        };
+        body.extend_from_slice(format!("@@ -{old_start},{old_len} +{new_start},{new_len} @@\n").as_bytes());
         for (sign, text, nonl) in out {
             body.push(sign as u8);
             body.extend_from_slice(text);

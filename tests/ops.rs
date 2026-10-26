@@ -333,3 +333,49 @@ fn show_ignores_signature_and_color_config() {
     assert_eq!(files.len(), 1);
     assert_eq!(log(&repo, 0, 5).unwrap()[0].subject, "one");
 }
+
+fn numbered(prefix: &str, n: usize) -> String {
+    (0..n).map(|i| format!("{prefix}{i}\n")).collect()
+}
+
+/// Two identical blocks; the work tree adds lines on top and `NEW` inside both blocks.
+fn repeated_blocks_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    let (d, repo) = temp_repo();
+    let block = numbered("x", 7);
+    let base = format!("{}{block}{}{block}", numbered("a", 10), numbered("m", 10));
+    write(&repo, "r.txt", &base);
+    commit_all(&repo, "init");
+    let with_new = format!("{}NEW\n{}", numbered("x", 4), (4..7).map(|i| format!("x{i}\n")).collect::<String>());
+    let changed = format!("{}{}{with_new}{}{with_new}", numbered("top", 20), numbered("a", 10), numbered("m", 10));
+    write(&repo, "r.txt", &changed);
+    (d, repo)
+}
+
+fn new_line_of_hunk(f: &gigit::git::diff::FileDiff, h: usize) -> LineSel {
+    let i = f.hunks[h].lines.iter().position(|l| l.text == "NEW").unwrap();
+    [(h, i)].into_iter().collect()
+}
+
+#[test]
+fn discard_line_in_repeated_block_hits_the_right_one() {
+    let (_d, repo) = repeated_blocks_repo();
+    let f = diff_file(&repo, "r.txt", DiffSide::Unstaged).unwrap().unwrap();
+    assert_eq!(f.hunks.len(), 3);
+    discard_lines(&repo, &f, &new_line_of_hunk(&f, 2)).unwrap();
+    let content = std::fs::read_to_string(repo.join("r.txt")).unwrap();
+    let first_new = content.find("NEW").unwrap();
+    let m0 = content.find("m0").unwrap();
+    assert!(first_new < m0, "the first block must keep its NEW");
+    assert_eq!(content.matches("NEW").count(), 1);
+}
+
+#[test]
+fn unstage_line_in_repeated_block_hits_the_right_one() {
+    let (_d, repo) = repeated_blocks_repo();
+    git(&repo, &["add", "r.txt"]);
+    let f = diff_file(&repo, "r.txt", DiffSide::Staged).unwrap().unwrap();
+    unstage_lines(&repo, &f, &new_line_of_hunk(&f, 2)).unwrap();
+    let staged = git(&repo, &["show", ":r.txt"]);
+    assert!(staged.find("NEW").unwrap() < staged.find("m0").unwrap());
+    assert_eq!(staged.matches("NEW").count(), 1);
+}
