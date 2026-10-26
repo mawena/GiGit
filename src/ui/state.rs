@@ -300,6 +300,18 @@ impl AppState {
         self.errors.push(ShownError { message, details });
     }
 
+    pub fn set_theme(&mut self, choice: crate::theme::ThemeChoice) {
+        self.config.theme = choice;
+        self.theme = theme::resolve(choice);
+        self.save_config();
+    }
+
+    pub fn set_language(&mut self, choice: crate::i18n::LangChoice) {
+        self.config.language = choice;
+        self.lang = i18n::resolve(choice);
+        self.save_config();
+    }
+
     pub fn tr<'a>(&self, key: &'a str) -> &'a str {
         i18n::tr(self.lang, key)
     }
@@ -449,5 +461,22 @@ mod tests {
         let v = s.open.as_ref().unwrap();
         assert_eq!(v.selected_file, None);
         assert!(v.line_sel.is_empty());
+    }
+
+    #[test]
+    fn changing_theme_updates_state_and_config() {
+        let (_d, mut s) = state();
+        s.set_theme(crate::theme::ThemeChoice::Clair);
+        assert_eq!(s.theme, Theme::Clair);
+        assert_eq!(Config::load(&s.config_path).theme, crate::theme::ThemeChoice::Clair);
+    }
+
+    #[test]
+    fn changing_language_updates_lang() {
+        let (_d, mut s) = state();
+        s.set_language(crate::i18n::LangChoice::En);
+        assert_eq!(s.lang, Lang::En);
+        assert_eq!(s.tr("repos.add"), "Add a folder");
+        assert_eq!(Config::load(&s.config_path).language, crate::i18n::LangChoice::En);
     }
 }

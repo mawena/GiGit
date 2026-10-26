@@ -5,6 +5,7 @@ mod commit_detail;
 mod dialogs;
 mod diff_view;
 mod graph_view;
+mod settings;
 mod sidebar;
 mod toolbar;
 pub mod state;
@@ -122,6 +123,7 @@ impl eframe::App for GigitApp {
                 graph_view::show(&mut self.state, ui);
             }
         });
+        settings::show(&mut self.state, &ctx);
         dialogs::pending(&mut self.state, &ctx);
     }
 

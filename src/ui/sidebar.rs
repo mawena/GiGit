@@ -36,9 +36,8 @@ pub fn show(app: &mut GigitApp, ui: &mut egui::Ui) {
 fn bottom_buttons(app: &mut GigitApp, ui: &mut egui::Ui) {
     let p = theme::palette(app.state.theme);
     ui.horizontal(|ui| {
-        let gear = ui
-            .add(egui::Button::new(egui::RichText::new("⚙").size(16.0)).frame(false))
-            .on_hover_text(app.state.tr("toolbar.settings"));
+        let label = egui::RichText::new(format!("⚙  {}", app.state.tr("toolbar.settings"))).color(p.muted);
+        let gear = ui.add(egui::Button::new(label).frame(false));
         if gear.clicked() {
             app.state.show_settings = !app.state.show_settings;
         }
