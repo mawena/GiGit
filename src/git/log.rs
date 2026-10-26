@@ -81,10 +81,8 @@ pub fn parse_refs(raw: &str) -> Vec<Ref> {
                     return None;
                 }
                 (RefKind::RemoteBranch, n)
-            } else if let Some(n) = name.strip_prefix("refs/tags/") {
-                (RefKind::Tag, n)
             } else {
-                return None;
+                (RefKind::Tag, name.strip_prefix("refs/tags/")?)
             };
             let target = if peeled.is_empty() { oid } else { peeled };
             Some(Ref { name: short.to_string(), kind, target: target.to_string() })
@@ -112,7 +110,7 @@ mod tests {
 
     #[test]
     fn parses_log_records() {
-        let raw = "m1\0p1 p2\0Ann\0ann@x.org\01700000000\0Merge it\0line one\nline two\n\x1e\nc2\0\0Bob\0b@x\01600000000\0Root\0\x1e\n";
+        let raw = "m1\0p1 p2\0Ann\0ann@x.org\x001700000000\0Merge it\0line one\nline two\n\x1e\nc2\0\0Bob\0b@x\x001600000000\0Root\0\x1e\n";
         let commits = parse_log(raw.as_bytes());
         assert_eq!(commits.len(), 2);
         let m = &commits[0];
@@ -125,7 +123,7 @@ mod tests {
 
     #[test]
     fn parses_root_commit() {
-        let raw = "c2\0\0Bob\0b@x\01600000000\0Root\0\x1e\n";
+        let raw = "c2\0\0Bob\0b@x\x001600000000\0Root\0\x1e\n";
         let c = &parse_log(raw.as_bytes())[0];
         assert!(c.parents.is_empty());
         assert_eq!(c.body, "");
