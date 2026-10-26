@@ -43,6 +43,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context) {
                 let mut th = state.config.theme;
                 let theme_label = |t: ThemeChoice| match t {
                     ThemeChoice::System => "theme.system",
+                    ThemeChoice::Ardoise => "theme.ardoise",
                     ThemeChoice::SombreChaleureux => "theme.sombre_chaleureux",
                     ThemeChoice::Nuit => "theme.nuit",
                     ThemeChoice::Clair => "theme.clair",
@@ -50,7 +51,13 @@ pub fn show(state: &mut AppState, ctx: &egui::Context) {
                 egui::ComboBox::from_id_salt("theme")
                     .selected_text(state.tr(theme_label(th)))
                     .show_ui(ui, |ui| {
-                        for t in [ThemeChoice::System, ThemeChoice::SombreChaleureux, ThemeChoice::Nuit, ThemeChoice::Clair] {
+                        for t in [
+                            ThemeChoice::System,
+                            ThemeChoice::Ardoise,
+                            ThemeChoice::SombreChaleureux,
+                            ThemeChoice::Nuit,
+                            ThemeChoice::Clair,
+                        ] {
                             ui.selectable_value(&mut th, t, i18n::tr(state.lang, theme_label(t)));
                         }
                     });
@@ -86,6 +93,15 @@ pub fn show(state: &mut AppState, ctx: &egui::Context) {
                 });
                 if minutes != state.config.autofetch_minutes {
                     state.config.autofetch_minutes = minutes;
+                    state.save_config();
+                }
+                ui.end_row();
+
+                ui.label(RichText::new(state.tr("settings.avatars")).color(p.muted));
+                let mut avatars = state.config.avatars;
+                let hint = state.tr("settings.avatars_hint").to_string();
+                if ui.checkbox(&mut avatars, "").on_hover_text(hint).changed() {
+                    state.config.avatars = avatars;
                     state.save_config();
                 }
                 ui.end_row();

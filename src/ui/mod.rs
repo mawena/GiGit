@@ -100,6 +100,10 @@ impl eframe::App for GigitApp {
         }
         self.apply_theme(ctx);
         self.autofetch(ctx);
+        self.state.avatars.poll(ctx);
+        if self.state.avatars.loading() {
+            ctx.request_repaint_after(Duration::from_millis(150));
+        }
         if let Some(r) = ctx.input(|i| i.viewport().inner_rect) {
             self.window_size = Some([r.width(), r.height()]);
         }

@@ -18,6 +18,8 @@ pub struct Config {
     pub font_size: f32,
     /// 0 disables automatic fetching.
     pub autofetch_minutes: u32,
+    /// Show authors' avatars (Gravatar / GitHub), as ungit does.
+    pub avatars: bool,
     pub window: Option<[f32; 2]>,
 }
 
@@ -30,6 +32,7 @@ impl Default for Config {
             theme: ThemeChoice::default(),
             font_size: 14.0,
             autofetch_minutes: 5,
+            avatars: true,
             window: None,
         }
     }
@@ -120,7 +123,8 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.font_size, 14.0);
         assert_eq!(c.autofetch_minutes, 5);
-        assert_eq!(c.theme, ThemeChoice::SombreChaleureux);
+        assert_eq!(c.theme, ThemeChoice::Ardoise);
+        assert!(c.avatars);
         assert_eq!(c.language, LangChoice::System);
         assert!(c.repos.is_empty());
     }
@@ -136,6 +140,7 @@ mod tests {
             theme: ThemeChoice::Nuit,
             font_size: 16.0,
             autofetch_minutes: 0,
+            avatars: false,
             window: Some([1000.0, 700.0]),
         };
         c.save(&path).unwrap();

@@ -57,7 +57,13 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
         }
         ui.add_space(4.0);
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        ui.label(RichText::new(format!("{} <{}>", commit.author, commit.email)).small().color(p.muted));
+        ui.horizontal(|ui| {
+            let avatar =
+                state.config.avatars.then(|| state.avatars.get(ui.ctx(), &commit.email)).flatten().map(|t| t.id());
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+            super::graph_view::avatar_circle(ui.painter(), p, rect.center(), 14.0, &commit.author, avatar);
+            ui.label(RichText::new(format!("{} <{}>", commit.author, commit.email)).small().color(p.muted));
+        });
         ui.label(
             RichText::new(format!("{}  ·  {}", format_local(commit.time), super::graph_view::relative_time(lang, now, commit.time)))
                 .small()
