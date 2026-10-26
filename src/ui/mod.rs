@@ -1,7 +1,9 @@
 //! egui front-end.
 
 mod dialogs;
+mod graph_view;
 mod sidebar;
+mod toolbar;
 pub mod state;
 
 use std::path::PathBuf;
@@ -102,10 +104,14 @@ impl eframe::App for GigitApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         sidebar::show(self, ui);
+        toolbar::show(&mut self.state, ui);
         dialogs::error_banner(&mut self.state, ui);
-        egui::CentralPanel::default().show(ui, |ui| {
+        let p = theme::palette(self.state.theme);
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg).inner_margin(6)).show(ui, |ui| {
             if self.state.open.is_none() {
                 dialogs::empty_state(self, ui);
+            } else {
+                graph_view::show(&mut self.state, ui);
             }
         });
         dialogs::pending(&mut self.state, &ctx);
