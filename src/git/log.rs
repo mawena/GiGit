@@ -62,7 +62,8 @@ pub fn log(repo: &Path, skip: usize, limit: usize) -> Result<Vec<Commit>, GitErr
     let skip = format!("--skip={skip}");
     let limit = format!("-n{limit}");
     let opts = RunOpts { read_only: true, ..Default::default() };
-    match run(repo, &["log", "--all", "--date-order", &format, &skip, &limit], &opts) {
+    let args = ["log", "--all", "--date-order", "--no-color", "--no-show-signature", &format, &skip, &limit];
+    match run(repo, &args, &opts) {
         Ok(out) => Ok(parse_log(&out.stdout)),
         // An unborn repository has no history: that is not an error.
         Err(_) if refs(repo)?.is_empty() => Ok(Vec::new()),
@@ -109,17 +110,18 @@ pub fn refs(repo: &Path) -> Result<Vec<Ref>, GitError> {
 pub fn show(repo: &Path, id: &str) -> Result<(Commit, Vec<FileDiff>), GitError> {
     let format = format!("--format={LOG_FORMAT}");
     let opts = RunOpts { read_only: true, ..Default::default() };
-    let out = run(
-        repo,
-        &["show", &format, "--no-ext-diff", "-M", "--diff-merges=first-parent", id, "--"],
-        &opts,
-    )?;
-    let raw = String::from_utf8_lossy(&out.stdout);
-    let (head, diff) = raw.split_once('\x1e').unwrap_or((&raw, ""));
-    let commit = parse_log(format!("{head}\x1e").as_bytes()).into_iter().next().ok_or_else(|| {
-        GitError::Failed { command: format!("git show {id}"), code: None, stderr: "commit introuvable".into() }
+    let mut args = vec!["show", &format, "-M", "--diff-merges=first-parent", "--no-show-signature"];
+    args.extend(super::diff::DIFF_OPTS);
+    args.extend([id, "--"]);
+    let out = run(repo, &args, &opts)?;
+    let raw = out.stdout;
+    let split = raw.iter().position(|b| *b == 0x1e).map_or(raw.len(), |p| p + 1);
+    let commit = parse_log(&raw[..split]).into_iter().next().ok_or_else(|| GitError::Failed {
+        command: format!("git show {id}"),
+        code: None,
+        stderr: "commit introuvable".into(),
     })?;
-    Ok((commit, super::diff::parse_diff(diff)))
+    Ok((commit, super::diff::parse_diff(&raw[split..])))
 }
 
 #[cfg(test)]

@@ -251,3 +251,85 @@ fn clean_of_star_named_file_deletes_only_it() {
     assert!(!repo.join("*").exists());
     assert!(repo.join("other.txt").exists());
 }
+
+fn all_lines(f: &gigit::git::diff::FileDiff) -> LineSel {
+    let mut s = LineSel::new();
+    for (h, hunk) in f.hunks.iter().enumerate() {
+        for (i, l) in hunk.lines.iter().enumerate() {
+            if l.kind != gigit::git::diff::LineKind::Context {
+                s.insert((h, i));
+            }
+        }
+    }
+    s
+}
+
+fn index_bytes(repo: &Path, path: &str) -> Vec<u8> {
+    let out = std::process::Command::new("git").args(["show", &format!(":{path}")]).current_dir(repo).output().unwrap();
+    assert!(out.status.success());
+    out.stdout
+}
+
+#[test]
+fn stage_hunk_of_latin1_file_keeps_bytes() {
+    let (_d, repo) = temp_repo();
+    write(&repo, "l.txt", "a\nb\nc\n");
+    commit_all(&repo, "init");
+    std::fs::write(repo.join("l.txt"), b"a\nb\ncaf\xE9\nc\n").unwrap();
+    let f = diff_file(&repo, "l.txt", DiffSide::Unstaged).unwrap().unwrap();
+    stage_lines(&repo, &f, &all_lines(&f)).unwrap();
+    assert_eq!(index_bytes(&repo, "l.txt"), b"a\nb\ncaf\xE9\nc\n");
+}
+
+#[test]
+fn stage_hunk_of_untracked_crlf_keeps_cr() {
+    let (_d, repo) = temp_repo();
+    write(&repo, "base", "x\n");
+    commit_all(&repo, "init");
+    std::fs::write(repo.join("w.txt"), b"one\r\ntwo\r\nthree\r\n").unwrap();
+    let f = diff_file(&repo, "w.txt", DiffSide::Unstaged).unwrap().unwrap();
+    assert_eq!(f.hunks[0].lines[0].text, "one");
+    stage_lines(&repo, &f, &all_lines(&f)).unwrap();
+    assert_eq!(index_bytes(&repo, "w.txt"), b"one\r\ntwo\r\nthree\r\n");
+}
+
+#[test]
+fn stage_line_of_tracked_crlf_file() {
+    let (_d, repo) = temp_repo();
+    std::fs::write(repo.join("t.txt"), b"a\r\nb\r\n").unwrap();
+    commit_all(&repo, "init");
+    std::fs::write(repo.join("t.txt"), b"A\r\nB\r\n").unwrap();
+    let f = diff_file(&repo, "t.txt", DiffSide::Unstaged).unwrap().unwrap();
+    let sel: LineSel = [(0, 0), (0, 2)].into_iter().collect();
+    stage_lines(&repo, &f, &sel).unwrap();
+    assert_eq!(index_bytes(&repo, "t.txt"), b"A\r\nb\r\n");
+}
+
+#[test]
+fn user_diff_config_does_not_break_patches() {
+    let (_d, repo) = temp_repo();
+    git(&repo, &["config", "diff.noprefix", "true"]);
+    git(&repo, &["config", "color.diff", "always"]);
+    git(&repo, &["config", "diff.mnemonicPrefix", "true"]);
+    write(&repo, "src/x.rs", "a\n");
+    commit_all(&repo, "init");
+    write(&repo, "src/x.rs", "b\n");
+    let f = diff_file(&repo, "src/x.rs", DiffSide::Unstaged).unwrap().expect("diff parsed despite color.diff=always");
+    assert_eq!(f.path(), "src/x.rs");
+    stage_lines(&repo, &f, &all_lines(&f)).unwrap();
+    assert_eq!(staged(&repo), ["src/x.rs"]);
+    assert_eq!(index_bytes(&repo, "src/x.rs"), b"b\n");
+}
+
+#[test]
+fn show_ignores_signature_and_color_config() {
+    let (_d, repo) = temp_repo();
+    git(&repo, &["config", "log.showSignature", "true"]);
+    git(&repo, &["config", "color.ui", "always"]);
+    write(&repo, "a", "1\n");
+    commit_all(&repo, "one");
+    let (c, files) = gigit::git::log::show(&repo, "HEAD").unwrap();
+    assert_eq!(c.subject, "one");
+    assert_eq!(files.len(), 1);
+    assert_eq!(log(&repo, 0, 5).unwrap()[0].subject, "one");
+}

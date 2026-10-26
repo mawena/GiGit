@@ -262,7 +262,7 @@ mod tests {
     use crate::git::diff::parse_diff;
 
     fn file() -> FileDiff {
-        parse_diff("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -10,2 +10,3 @@\n x\n+y\n z\n")
+        parse_diff(b"diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -10,2 +10,3 @@\n x\n+y\n z\n")
             .remove(0)
     }
 

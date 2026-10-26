@@ -14,7 +14,10 @@ pub enum LineKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffLine {
     pub kind: LineKind,
+    /// For display: decoded lossily, without a trailing `\r`.
     pub text: String,
+    /// Exact bytes of the line (without its sign and `\n`), used to rebuild patches.
+    pub raw: Vec<u8>,
     pub old_no: Option<u32>,
     pub new_no: Option<u32>,
     /// Followed by "\ No newline at end of file".
@@ -38,7 +41,7 @@ pub struct FileDiff {
     /// `None` means /dev/null (file deleted).
     pub new_path: Option<String>,
     /// Raw header lines from `diff --git` up to the first hunk, kept verbatim to rebuild patches.
-    pub header: Vec<String>,
+    pub header: Vec<Vec<u8>>,
     pub binary: bool,
     pub hunks: Vec<Hunk>,
 }
@@ -124,16 +127,24 @@ fn parse_hunk_header(line: &str) -> Option<Hunk> {
     Some(Hunk { old_start, old_len, new_start, new_len, section: section.trim().to_string(), lines: Vec::new() })
 }
 
-pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
+/// Splits on `\n` only, keeping any `\r`, so patches can be rebuilt byte for byte.
+fn byte_lines(raw: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
+    raw.split(|b| *b == b'\n').filter(move |_| !raw.is_empty())
+}
+
+pub fn parse_diff(raw: &[u8]) -> Vec<FileDiff> {
     let mut files: Vec<FileDiff> = Vec::new();
     let (mut old_no, mut new_no) = (0u32, 0u32);
-    for line in raw.lines() {
+    for bytes in byte_lines(raw) {
+        let line = String::from_utf8_lossy(bytes);
+        let line = line.as_ref();
         if let Some(rest) = line.strip_prefix("diff --git ") {
             let p = git_line_path(rest);
             files.push(FileDiff {
                 old_path: p.clone(),
                 new_path: p,
-                header: vec![line.to_string()],
+                header: vec![bytes.to_vec()],
                 binary: false,
                 hunks: Vec::new(),
             });
@@ -141,7 +152,7 @@ pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
         }
         let Some(file) = files.last_mut() else { continue };
         if file.hunks.is_empty() && !line.starts_with("@@") {
-            file.header.push(line.to_string());
+            file.header.push(bytes.to_vec());
             if let Some(v) = line.strip_prefix("--- ") {
                 file.old_path = side_path(v);
             } else if let Some(v) = line.strip_prefix("+++ ") {
@@ -166,19 +177,20 @@ pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
             continue;
         }
         let Some(hunk) = file.hunks.last_mut() else { continue };
-        let (kind, text) = match line.as_bytes().first() {
-            Some(b'+') => (LineKind::Added, &line[1..]),
-            Some(b'-') => (LineKind::Removed, &line[1..]),
-            Some(b' ') => (LineKind::Context, &line[1..]),
+        let kind = match bytes.first() {
+            Some(b'+') => LineKind::Added,
+            Some(b'-') => LineKind::Removed,
+            Some(b' ') | None => LineKind::Context,
             Some(b'\\') => {
                 if let Some(last) = hunk.lines.last_mut() {
                     last.no_newline = true;
                 }
                 continue;
             }
-            None => (LineKind::Context, ""),
             _ => continue,
         };
+        let raw = bytes.get(1..).unwrap_or_default().to_vec();
+        let text = String::from_utf8_lossy(raw.strip_suffix(b"\r").unwrap_or(&raw)).into_owned();
         let (o, n) = match kind {
             LineKind::Context => (Some(old_no), Some(new_no)),
             LineKind::Removed => (Some(old_no), None),
@@ -186,30 +198,40 @@ pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
         };
         old_no += u32::from(o.is_some());
         new_no += u32::from(n.is_some());
-        hunk.lines.push(DiffLine { kind, text: text.to_string(), old_no: o, new_no: n, no_newline: false });
+        hunk.lines.push(DiffLine { kind, text, raw, old_no: o, new_no: n, no_newline: false });
     }
     files
 }
 
+/// Options pinning git's diff output to what the parser and `git apply` expect, whatever the
+/// user's configuration (no colour, no external or textconv drivers, standard `a/` `b/` prefixes).
+pub const DIFF_OPTS: [&str; 5] = ["--no-ext-diff", "--no-color", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"];
+
 pub fn diff_file(repo: &Path, path: &str, side: DiffSide) -> Result<Option<FileDiff>, GitError> {
     let ro = RunOpts { read_only: true, ..Default::default() };
+    let args = |extra: &[&'static str]| -> Vec<&str> {
+        let mut v = vec!["diff"];
+        v.extend(extra);
+        v.extend(DIFF_OPTS);
+        v
+    };
     let out = match side {
-        DiffSide::Staged => run(repo, &["diff", "--cached", "--no-ext-diff", "--", path], &ro)?,
+        DiffSide::Staged => run(repo, &[args(&["--cached"]), vec!["--", path]].concat(), &ro)?,
         DiffSide::Unstaged => {
-            let out = run(repo, &["diff", "--no-ext-diff", "--", path], &ro)?;
+            let out = run(repo, &[args(&[]), vec!["--", path]].concat(), &ro)?;
             let untracked = out.stdout.is_empty()
                 && !run(repo, &["ls-files", "--others", "--exclude-standard", "--", path], &ro)?
                     .stdout
                     .is_empty();
             if untracked {
                 let opts = RunOpts { allow_exit_1: true, ..ro };
-                run(repo, &["diff", "--no-ext-diff", "--no-index", "--", "/dev/null", path], &opts)?
+                run(repo, &[args(&["--no-index"]), vec!["--", "/dev/null", path]].concat(), &opts)?
             } else {
                 out
             }
         }
     };
-    Ok(parse_diff(&String::from_utf8_lossy(&out.stdout)).into_iter().next())
+    Ok(parse_diff(&out.stdout).into_iter().next())
 }
 
 #[cfg(test)]
@@ -232,13 +254,13 @@ index 111..222 100644
 
     #[test]
     fn parses_single_hunk_with_line_numbers() {
-        let files = parse_diff(ONE);
+        let files = parse_diff(ONE.as_bytes());
         assert_eq!(files.len(), 1);
         let f = &files[0];
         assert_eq!(f.old_path.as_deref(), Some("src/x.rs"));
         assert_eq!(f.new_path.as_deref(), Some("src/x.rs"));
         assert_eq!(f.header.len(), 4);
-        assert_eq!(f.header[0], "diff --git a/src/x.rs b/src/x.rs");
+        assert_eq!(f.header[0], b"diff --git a/src/x.rs b/src/x.rs");
         let h = &f.hunks[0];
         assert_eq!((h.old_start, h.old_len, h.new_start, h.new_len), (3, 4, 3, 5));
         assert_eq!(h.section, "fn x");
@@ -258,7 +280,7 @@ index 111..222 100644
 
     #[test]
     fn parses_header_omitted_len() {
-        let f = &parse_diff("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n+b\n")[0];
+        let f = &parse_diff("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n+b\n".as_bytes())[0];
         let h = &f.hunks[0];
         assert_eq!((h.old_start, h.old_len, h.new_start, h.new_len), (1, 1, 1, 1));
         assert_eq!(h.section, "");
@@ -267,7 +289,7 @@ index 111..222 100644
     #[test]
     fn parses_no_newline_marker() {
         let f = &parse_diff(
-            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+a\n",
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+a\n".as_bytes(),
         )[0];
         let lines = &f.hunks[0].lines;
         assert_eq!(lines.len(), 2);
@@ -278,7 +300,7 @@ index 111..222 100644
     #[test]
     fn parses_new_and_deleted_files() {
         let raw = "diff --git a/n b/n\nnew file mode 100644\n--- /dev/null\n+++ b/n\n@@ -0,0 +1 @@\n+x\ndiff --git a/d b/d\ndeleted file mode 100644\n--- a/d\n+++ /dev/null\n@@ -1 +0,0 @@\n-y\n";
-        let files = parse_diff(raw);
+        let files = parse_diff(raw.as_bytes());
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].old_path, None);
         assert_eq!(files[0].new_path.as_deref(), Some("n"));
@@ -289,7 +311,7 @@ index 111..222 100644
     #[test]
     fn parses_binary() {
         let raw = "diff --git a/x.png b/x.png\nindex 1..2 100644\nBinary files a/x.png and b/x.png differ\n";
-        let f = &parse_diff(raw)[0];
+        let f = &parse_diff(raw.as_bytes())[0];
         assert!(f.binary);
         assert!(f.hunks.is_empty());
         assert_eq!(f.path(), "x.png");
@@ -298,16 +320,16 @@ index 111..222 100644
     #[test]
     fn parses_two_files() {
         let raw = format!("{ONE}{}", ONE.replace("src/x.rs", "y.rs"));
-        let files = parse_diff(&raw);
+        let files = parse_diff(raw.as_bytes());
         assert_eq!(files.len(), 2);
         assert_eq!(files[1].path(), "y.rs");
-        assert_eq!(files[1].header[0], "diff --git a/y.rs b/y.rs");
+        assert_eq!(files[1].header[0], b"diff --git a/y.rs b/y.rs");
     }
 
     #[test]
     fn parses_path_with_spaces() {
         let raw = "diff --git a/a b/c d.txt b/a b/c d.txt\n--- a/a b/c d.txt\n+++ b/a b/c d.txt\n@@ -1 +1 @@\n-a\n+b\n";
-        assert_eq!(parse_diff(raw)[0].path(), "a b/c d.txt");
+        assert_eq!(parse_diff(raw.as_bytes())[0].path(), "a b/c d.txt");
     }
 
     #[test]
