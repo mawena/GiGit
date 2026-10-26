@@ -182,6 +182,9 @@ fn visuals(p: &Palette) -> egui::Visuals {
         state.corner_radius = radius;
     }
     w.noninteractive.corner_radius = radius;
+    // Slider rails and check boxes use `bg_fill`: give them contrast against panels.
+    w.inactive.bg_fill = p.border;
+    v.slider_trailing_fill = true;
     w.hovered.bg_stroke = Stroke::new(1.0, p.accent.gamma_multiply(0.6));
     w.active.bg_stroke = Stroke::new(1.0, p.accent);
     v
@@ -311,5 +314,7 @@ mod tests {
         assert!(!style.visuals.dark_mode);
         assert_eq!(style.visuals.panel_fill, p.bg);
         assert_eq!(style.text_styles[&egui::TextStyle::Body].size, 15.0);
+        assert_eq!(style.visuals.widgets.inactive.bg_fill, p.border);
+        assert!(style.visuals.slider_trailing_fill);
     }
 }

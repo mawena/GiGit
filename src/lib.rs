@@ -6,3 +6,4 @@ pub mod theme;
 pub mod watch;
 pub mod worker;
 pub mod single_instance;
+pub mod ui;
