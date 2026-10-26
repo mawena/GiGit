@@ -32,6 +32,8 @@ pub struct RunOpts {
     pub background: bool,
     pub read_only: bool,
     pub stdin: Option<Vec<u8>>,
+    /// Treat exit code 1 as success (e.g. `diff --no-index`).
+    pub allow_exit_1: bool,
 }
 
 fn build_command(repo: &Path, args: &[&str], opts: &RunOpts) -> Command {
@@ -69,7 +71,7 @@ pub fn run(repo: &Path, args: &[&str], opts: &RunOpts) -> Result<GitOutput, GitE
     }
     let out = child.wait_with_output()?;
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    if out.status.success() {
+    if out.status.success() || (opts.allow_exit_1 && out.status.code() == Some(1)) {
         Ok(GitOutput { stdout: out.stdout, stderr })
     } else {
         Err(GitError::Failed {
@@ -184,3 +186,4 @@ mod tests {
 }
 pub mod status;
 pub mod log;
+pub mod diff;

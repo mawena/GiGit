@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use super::diff::FileDiff;
 use super::{GitError, RunOpts, run, run_str};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +105,23 @@ pub fn refs(repo: &Path) -> Result<Vec<Ref>, GitError> {
     Ok(refs)
 }
 
+/// A commit and its diff (merges are diffed against their first parent).
+pub fn show(repo: &Path, id: &str) -> Result<(Commit, Vec<FileDiff>), GitError> {
+    let format = format!("--format={LOG_FORMAT}");
+    let opts = RunOpts { read_only: true, ..Default::default() };
+    let out = run(
+        repo,
+        &["show", &format, "--no-ext-diff", "-M", "--diff-merges=first-parent", id, "--"],
+        &opts,
+    )?;
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let (head, diff) = raw.split_once('\x1e').unwrap_or((&raw, ""));
+    let commit = parse_log(format!("{head}\x1e").as_bytes()).into_iter().next().ok_or_else(|| {
+        GitError::Failed { command: format!("git show {id}"), code: None, stderr: "commit introuvable".into() }
+    })?;
+    Ok((commit, super::diff::parse_diff(diff)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +193,33 @@ mod tests {
         let refs = refs(&repo).unwrap();
         assert!(refs.iter().any(|r| r.kind == RefKind::Head));
         assert!(refs.iter().any(|r| r.kind == RefKind::LocalBranch && r.name == "main"));
+    }
+
+    #[test]
+    fn show_returns_commit_and_files() {
+        let (_d, repo) = temp_repo();
+        write(&repo, "a.txt", "1\n");
+        commit_all(&repo, "first");
+        write(&repo, "a.txt", "2\n");
+        write(&repo, "b c.txt", "x\n");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "second", "-m", "details here"]);
+        let id = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+        let (c, files) = show(&repo, &id).unwrap();
+        assert_eq!(c.id, id);
+        assert_eq!(c.subject, "second");
+        assert_eq!(c.body, "details here");
+        let paths: Vec<_> = files.iter().map(|f| f.path()).collect();
+        assert_eq!(paths, ["a.txt", "b c.txt"]);
+    }
+
+    #[test]
+    fn show_root_commit() {
+        let (_d, repo) = temp_repo();
+        write(&repo, "a.txt", "1\n");
+        commit_all(&repo, "first");
+        let (c, files) = show(&repo, "HEAD").unwrap();
+        assert!(c.parents.is_empty());
+        assert_eq!(files.len(), 1);
     }
 }
