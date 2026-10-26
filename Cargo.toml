@@ -1,0 +1,25 @@
+[package]
+name = "gigit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Client git graphique, rapide et convivial / A friendly graphical git client"
+license = "MIT"
+authors = ["mawena <gamligocharles2@gmail.com>"]
+
+[dependencies]
+anyhow = "1.0.104"
+dark-light = "3.0.0"
+directories = "6.0.0"
+eframe = "0.37.0"
+libc = "0.2.191"
+notify = "8.2.1"
+notify-debouncer-mini = "0.7.0"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+sys-locale = "0.3.2"
+thiserror = "2.0.21"
+toml = "1.1.8"
+
+[dev-dependencies]
+tempfile = "3.27.0"
