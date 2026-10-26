@@ -17,7 +17,6 @@ directories = "6.0.0"
 eframe = "0.37.0"
 libc = "0.2.191"
 notify = "8.2.1"
-notify-debouncer-mini = "0.7.0"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 sys-locale = "0.3.2"
@@ -48,4 +47,5 @@ assets = [
     ["assets/gigit-256.png", "usr/share/icons/hicolor/256x256/apps/gigit.png", "644"],
     ["assets/gigit.svg", "usr/share/icons/hicolor/scalable/apps/gigit.svg", "644"],
     ["README.md", "usr/share/doc/gigit/README.md", "644"],
+    ["assets/fonts/OFL.txt", "usr/share/doc/gigit/fonts-OFL.txt", "644"],
 ]

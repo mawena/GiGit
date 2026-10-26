@@ -7,14 +7,13 @@ use std::time::Instant;
 
 use crate::config::{self, Config, RepoProbe};
 use crate::git::{GitError, status};
-use crate::graph;
 use crate::git::diff::{DiffSide, FileDiff};
 use crate::git::log::Commit;
 use crate::git::patch::LineSel;
 use crate::i18n::{self, Lang};
 use crate::theme::{self, Theme};
 use crate::watch::{self, WatchGuard};
-use crate::worker::{Job, JobResult, PAGE, RepoWorker, Snapshot, Wake};
+use crate::worker::{Job, JobResult, RepoWorker, Snapshot, Wake};
 
 pub struct RepoView {
     pub path: PathBuf,
@@ -46,7 +45,8 @@ pub struct RepoBadge {
 
 #[derive(Debug, Clone)]
 pub enum Pending {
-    Confirm { text_key: &'static str, action: Job },
+    /// `repo` is the repository the action was confirmed for; it never runs anywhere else.
+    Confirm { repo: PathBuf, text_key: &'static str, action: Job },
     InitRepo(PathBuf),
 }
 
@@ -54,6 +54,13 @@ pub enum Pending {
 pub struct ShownError {
     pub message: String,
     pub details: String,
+}
+
+/// Results of work moved off the UI thread.
+enum Background {
+    Probed(PathBuf, RepoProbe),
+    Inited(PathBuf, Result<(), GitError>),
+    Watching(PathBuf, Option<WatchGuard>),
 }
 
 pub struct AppState {
@@ -66,11 +73,15 @@ pub struct AppState {
     pub errors: Vec<ShownError>,
     pub pending: Option<Pending>,
     pub show_settings: bool,
+    /// Probes, inits and watcher setups still running off the UI thread.
+    pub background_tasks: usize,
     pub wake: Wake,
     results_tx: Sender<(PathBuf, JobResult)>,
     results_rx: Receiver<(PathBuf, JobResult)>,
     badges_tx: Sender<(PathBuf, RepoBadge)>,
     badges_rx: Receiver<(PathBuf, RepoBadge)>,
+    background_tx: Sender<Background>,
+    background_rx: Receiver<Background>,
 }
 
 /// Branch, dirtiness and ahead/behind of a listed repository, read from local data only.
@@ -95,6 +106,7 @@ impl AppState {
     pub fn new(config: Config, config_path: PathBuf, wake: Wake) -> Self {
         let (results_tx, results_rx) = channel();
         let (badges_tx, badges_rx) = channel();
+        let (background_tx, background_rx) = channel();
         AppState {
             lang: i18n::resolve(config.language),
             theme: theme::resolve(config.theme),
@@ -105,11 +117,14 @@ impl AppState {
             errors: Vec::new(),
             pending: None,
             show_settings: false,
+            background_tasks: 0,
             wake,
             results_tx,
             results_rx,
             badges_tx,
             badges_rx,
+            background_tx,
+            background_rx,
         }
     }
 
@@ -120,17 +135,26 @@ impl AppState {
     }
 
     pub fn open_repo(&mut self, p: PathBuf) {
+        // A confirmation belongs to the repository it was asked for.
+        if matches!(self.pending, Some(Pending::Confirm { .. })) {
+            self.pending = None;
+        }
         let worker = RepoWorker::spawn(p.clone(), self.results_tx.clone(), self.wake.clone());
         let jobs = worker.sender();
-        let watch = watch::spawn_watcher(&p, move || {
-            let _ = jobs.send(Job::Refresh);
-        })
-        .ok();
+        let root = p.clone();
+        // A recursive watch walks the whole tree: never on the UI thread.
+        self.spawn_background(move || {
+            let watch = watch::spawn_watcher(&root, move || {
+                let _ = jobs.send(Job::Refresh);
+            })
+            .ok();
+            Background::Watching(root, watch)
+        });
         worker.send(Job::Refresh);
         self.open = Some(RepoView {
             path: p.clone(),
             worker,
-            watch,
+            watch: None,
             snapshot: None,
             selected_commit: None,
             selected_file: None,
@@ -152,24 +176,51 @@ impl AppState {
         self.refresh_badges();
     }
 
+    /// Runs `task` on a thread; its result is handled by `poll`.
+    fn spawn_background(&mut self, task: impl FnOnce() -> Background + Send + 'static) {
+        self.background_tasks += 1;
+        let tx = self.background_tx.clone();
+        let wake = self.wake.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(task());
+            wake();
+        });
+    }
+
+    /// Probes `p` in the background, then opens it, offers `git init`, or reports it missing.
     pub fn add_folder(&mut self, p: PathBuf) {
-        match config::probe(&p) {
-            RepoProbe::Ok { root } => {
-                self.config.add_repo(root.clone());
-                self.open_repo(root);
-            }
-            RepoProbe::NotARepo => self.pending = Some(Pending::InitRepo(p)),
-            RepoProbe::Missing => self.errors.push(ShownError {
-                message: self.tr("repos.missing").to_string(),
-                details: p.display().to_string(),
-            }),
-        }
+        self.spawn_background(move || {
+            let probe = config::probe(&p);
+            Background::Probed(p, probe)
+        });
     }
 
     pub fn init_and_add(&mut self, p: PathBuf) {
-        match config::init_repo(&p) {
-            Ok(()) => self.add_folder(p),
-            Err(e) => self.push_error(&e),
+        self.spawn_background(move || {
+            let result = config::init_repo(&p);
+            Background::Inited(p, result)
+        });
+    }
+
+    fn handle_background(&mut self, b: Background) {
+        self.background_tasks = self.background_tasks.saturating_sub(1);
+        match b {
+            Background::Probed(_, RepoProbe::Ok { root }) => {
+                self.config.add_repo(root.clone());
+                self.open_repo(root);
+            }
+            Background::Probed(p, RepoProbe::NotARepo) => self.pending = Some(Pending::InitRepo(p)),
+            Background::Probed(p, RepoProbe::Missing) => self.errors.push(ShownError {
+                message: self.tr("repos.missing").to_string(),
+                details: p.display().to_string(),
+            }),
+            Background::Inited(p, Ok(())) => self.add_folder(p),
+            Background::Inited(_, Err(e)) => self.push_error(&e),
+            Background::Watching(p, guard) => {
+                if let Some(v) = self.open.as_mut().filter(|v| v.path == p) {
+                    v.watch = guard;
+                }
+            }
         }
     }
 
@@ -210,6 +261,9 @@ impl AppState {
         while let Ok((path, r)) = self.results_rx.try_recv() {
             self.handle_result(&path, r);
         }
+        while let Ok(b) = self.background_rx.try_recv() {
+            self.handle_background(b);
+        }
         while let Ok((path, b)) = self.badges_rx.try_recv() {
             self.badges.insert(path, b);
         }
@@ -248,14 +302,6 @@ impl AppState {
                 }
                 v.snapshot = Some(snap);
                 v.loading_more = false;
-            }
-            JobResult::More { commits } => {
-                v.loading_more = false;
-                if let Some(snap) = v.snapshot.as_mut() {
-                    snap.has_more = commits.len() == PAGE;
-                    snap.commits.extend(commits);
-                    snap.layout = graph::layout(&snap.commits, &snap.refs);
-                }
             }
             JobResult::Diff { path: file, side, diff } => {
                 if v.selected_file.as_ref() == Some(&(file, side)) {
@@ -312,6 +358,30 @@ impl AppState {
         self.save_config();
     }
 
+    /// Asks for confirmation before running `action` on the open repository.
+    pub fn confirm(&mut self, text_key: &'static str, action: Job) {
+        if let Some(v) = &self.open {
+            self.pending = Some(Pending::Confirm { repo: v.path.clone(), text_key, action });
+        }
+    }
+
+    /// Resolves the pending dialog. A confirmed action only runs on the repository it was
+    /// confirmed for.
+    pub fn answer_pending(&mut self, yes: bool) {
+        let Some(pending) = self.pending.take() else { return };
+        if !yes {
+            return;
+        }
+        match pending {
+            Pending::Confirm { repo, action, .. } => {
+                if self.open.as_ref().is_some_and(|v| v.path == repo) {
+                    self.send(action);
+                }
+            }
+            Pending::InitRepo(path) => self.init_and_add(path),
+        }
+    }
+
     pub fn tr<'a>(&self, key: &'a str) -> &'a str {
         i18n::tr(self.lang, key)
     }
@@ -331,6 +401,34 @@ mod tests {
         (d, s)
     }
 
+    /// Polls until no background task (probe, init, watcher setup) is in flight.
+    fn settle(s: &mut AppState) {
+        for _ in 0..250 {
+            s.poll();
+            if s.background_tasks == 0 {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("background tasks never finished");
+    }
+
+    fn add(s: &mut AppState, p: impl Into<PathBuf>) {
+        s.add_folder(p.into());
+        settle(s);
+    }
+
+    #[test]
+    fn add_folder_is_asynchronous() {
+        let (_d, mut s) = state();
+        let (_r, repo) = temp_repo();
+        s.add_folder(repo);
+        assert!(s.open.is_none(), "probing must not happen on the UI thread");
+        settle(&mut s);
+        assert!(s.open.is_some());
+        assert!(s.open.as_ref().unwrap().watch.is_some());
+    }
+
     fn wait_snapshot(s: &mut AppState) {
         for _ in 0..200 {
             s.poll();
@@ -347,7 +445,7 @@ mod tests {
         let (_d, mut s) = state();
         let (_r, repo) = temp_repo();
         std::fs::create_dir(repo.join("sub")).unwrap();
-        s.add_folder(repo.join("sub"));
+        add(&mut s, repo.join("sub"));
         let root = repo.canonicalize().unwrap();
         assert_eq!(s.config.repos, vec![root.clone()]);
         assert_eq!(s.open.as_ref().unwrap().path, root);
@@ -360,10 +458,11 @@ mod tests {
     fn add_folder_non_repo_sets_pending_init() {
         let (_d, mut s) = state();
         let dir = tempfile::TempDir::new().unwrap();
-        s.add_folder(dir.path().to_path_buf());
+        add(&mut s, dir.path().to_path_buf());
         assert!(matches!(&s.pending, Some(Pending::InitRepo(p)) if p == dir.path()));
         assert!(s.config.repos.is_empty());
         s.init_and_add(dir.path().to_path_buf());
+        settle(&mut s);
         assert_eq!(s.config.repos.len(), 1);
         assert!(s.open.is_some());
     }
@@ -371,7 +470,7 @@ mod tests {
     #[test]
     fn add_missing_folder_shows_error() {
         let (_d, mut s) = state();
-        s.add_folder("/definitely/missing".into());
+        add(&mut s, "/definitely/missing");
         assert_eq!(s.errors.len(), 1);
         assert!(s.config.repos.is_empty());
     }
@@ -380,7 +479,7 @@ mod tests {
     fn handle_error_result_pushes_shown_error() {
         let (_d, mut s) = state();
         let (_r, repo) = temp_repo();
-        s.add_folder(repo.clone());
+        add(&mut s, repo.clone());
         let path = s.open.as_ref().unwrap().path.clone();
         let err = GitError::Failed { command: "git push".into(), code: Some(1), stderr: "fatal: nope\nmore".into() };
         s.handle_result(&path, JobResult::Error { job: "push", error: err, background: false });
@@ -403,7 +502,7 @@ mod tests {
     fn results_for_other_repo_are_ignored() {
         let (_d, mut s) = state();
         let (_r, repo) = temp_repo();
-        s.add_folder(repo);
+        add(&mut s, repo);
         s.handle_result(Path::new("/elsewhere"), JobResult::Snapshot(Snapshot::default()));
         assert!(s.open.as_ref().unwrap().snapshot.is_none());
     }
@@ -412,7 +511,7 @@ mod tests {
     fn commit_done_clears_message() {
         let (_d, mut s) = state();
         let (_r, repo) = temp_repo();
-        s.add_folder(repo);
+        add(&mut s, repo);
         let path = s.open.as_ref().unwrap().path.clone();
         let v = s.open.as_mut().unwrap();
         v.commit_msg = "msg".into();
@@ -427,7 +526,7 @@ mod tests {
     fn remove_open_repo_closes_view() {
         let (_d, mut s) = state();
         let (_r, repo) = temp_repo();
-        s.add_folder(repo.clone());
+        add(&mut s, repo.clone());
         let root = repo.canonicalize().unwrap();
         s.remove_repo(&root);
         assert!(s.open.is_none());
@@ -452,7 +551,7 @@ mod tests {
     fn selected_file_cleared_when_it_leaves_the_side() {
         let (_d, mut s) = state();
         let (_r, repo) = temp_repo();
-        s.add_folder(repo);
+        add(&mut s, repo);
         let path = s.open.as_ref().unwrap().path.clone();
         let v = s.open.as_mut().unwrap();
         v.selected_file = Some(("gone.txt".into(), DiffSide::Unstaged));
@@ -478,5 +577,68 @@ mod tests {
         assert_eq!(s.lang, Lang::En);
         assert_eq!(s.tr("repos.add"), "Add a folder");
         assert_eq!(Config::load(&s.config_path).language, crate::i18n::LangChoice::En);
+    }
+
+    fn modified_repo() -> (tempfile::TempDir, PathBuf) {
+        let (d, repo) = temp_repo();
+        write(&repo, "f", "1\n");
+        commit_all(&repo, "init");
+        write(&repo, "f", "2\n");
+        (d, repo)
+    }
+
+    fn discard_f() -> Job {
+        Job::Discard(vec![crate::git::status::FileEntry {
+            path: "f".into(),
+            orig_path: None,
+            index: crate::git::status::FileState::Unmodified,
+            worktree: crate::git::status::FileState::Modified,
+            conflicted: false,
+        }])
+    }
+
+    #[test]
+    fn switching_repo_drops_pending_confirmation() {
+        let (_d, mut s) = state();
+        let (_a, a) = modified_repo();
+        let (_b, b) = modified_repo();
+        add(&mut s, a);
+        s.confirm("confirm.discard", discard_f());
+        assert!(matches!(&s.pending, Some(Pending::Confirm { .. })));
+        add(&mut s, b);
+        assert!(s.pending.is_none());
+    }
+
+    #[test]
+    fn confirmed_action_never_runs_on_another_repo() {
+        let (_d, mut s) = state();
+        let (_a, a) = modified_repo();
+        let (_b, b) = modified_repo();
+        add(&mut s, a.clone());
+        let a_root = s.open.as_ref().unwrap().path.clone();
+        add(&mut s, b.clone());
+        // A confirmation created for A while B is open (e.g. a switch raced the dialog).
+        s.pending = Some(Pending::Confirm { repo: a_root, text_key: "confirm.discard", action: discard_f() });
+        s.answer_pending(true);
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(std::fs::read_to_string(b.join("f")).unwrap(), "2\n");
+        assert_eq!(std::fs::read_to_string(a.join("f")).unwrap(), "2\n");
+        assert!(s.pending.is_none());
+    }
+
+    #[test]
+    fn confirmed_action_runs_on_its_repo() {
+        let (_d, mut s) = state();
+        let (_a, a) = modified_repo();
+        add(&mut s, a.clone());
+        s.confirm("confirm.discard", discard_f());
+        s.answer_pending(true);
+        for _ in 0..100 {
+            if std::fs::read_to_string(a.join("f")).unwrap() == "1\n" {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("discard did not run");
     }
 }

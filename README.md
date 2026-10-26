@@ -25,7 +25,7 @@ GiGit est une vraie application de bureau. Tes dépôts restent listés sur le c
 - **Commit et amend.** `Ctrl+Entrée` valide le commit. L'amend reprend le message du dernier commit.
 - **Annulation de modifications** (fichier, bloc ou ligne), toujours après confirmation.
 - **Ajout au `.gitignore`** depuis un clic droit sur un fichier.
-- **Fetch, pull, push** et push forcé (`--force-with-lease`, avec confirmation). Un premier push crée automatiquement la branche distante.
+- **Fetch, pull, push** et push forcé (avec confirmation). Le push forcé utilise `--force-with-lease --force-if-includes` et refuse d'écraser des commits distants que tu n'as pas intégrés. Un premier push crée automatiquement la branche distante.
 - **Fetch automatique** du dépôt ouvert, toutes les 5 minutes par défaut et réglable.
 - **Rafraîchissement automatique** : GiGit voit tout de suite les changements que tu fais dans ton éditeur ou ton terminal.
 - **Français et anglais.** Par défaut, GiGit suit la langue du système.
@@ -40,7 +40,11 @@ GiGit lance la commande `git` installée sur ta machine. Ta configuration, tes h
 - **v0.2** : branches et tags (création, suppression, checkout), reset, glisser-déposer de branches comme dans ungit, merge, rebase, squash, cherry-pick, revert et résolution des conflits.
 - **v0.3** : stash, sous-modules, gestion des remotes, clone, éditeur de `.gitignore`, diff d'images, saisie des mots de passe dans GiGit et raccourcis clavier.
 
-> Tant que la fenêtre de saisie des mots de passe n'est pas là (prévue en v0.3), un push ou un pull HTTPS qui demande un mot de passe échoue aussitôt avec un message clair. Utilise un agent SSH ou un gestionnaire d'identifiants git en attendant.
+> Tant que la fenêtre de saisie des mots de passe de GiGit n'est pas là (prévue en v0.3) :
+> - un push ou un pull que tu lances utilise la fenêtre de mot de passe de ton bureau si tu en as une (par exemple sous KDE). Sinon, il échoue aussitôt avec un message clair ;
+> - le fetch automatique ne demande jamais de mot de passe.
+>
+> En attendant, le plus simple est d'utiliser un agent SSH ou un gestionnaire d'identifiants git.
 
 ## Installation
 
@@ -134,7 +138,7 @@ It is a native desktop app with a persistent sidebar of repositories: one click 
 - **Commit and amend** (`Ctrl+Enter` commits).
 - **Discard** a file, a hunk or a line, always after a confirmation.
 - **Add a file to `.gitignore`** from its right-click menu.
-- **Fetch, pull, push** and force push (`--force-with-lease`, after a confirmation). A first push sets the upstream.
+- **Fetch, pull, push** and force push (after a confirmation). Force push uses `--force-with-lease --force-if-includes` and never overwrites remote commits you have not integrated. A first push sets the upstream.
 - **Automatic background fetch** of the open repository.
 - **Auto-refresh** when files change on disk.
 - **French and English** interface.

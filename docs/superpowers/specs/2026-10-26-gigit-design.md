@@ -44,7 +44,7 @@ Liste établie à partir des routes de `ungit/source/git-api.js` et des composan
 - Barre latérale listant les dépôts enregistrés : nom du dossier, branche courante, badges (modifications non commitées ; commits en avance et en retard sur l'upstream).
 - **Ajouter un dossier** avec un sélecteur natif. Si le dossier n'est pas un dépôt git, proposer `git init` (route ungit `/init`) ou un clone (route `/clone`) vers ce dossier.
 - **Retirer** un dépôt de la liste (clic droit), sans aucune action sur le disque.
-- Réordonner la liste par glisser-déposer (choix de conception de Claude).
+- Réordonner la liste par glisser-déposer (choix d’implémentation).
 - Au lancement, rouvrir le dernier dépôt affiché.
 - La CLI `gigit [chemin]` ouvre le chemin donné et l'ajoute à la liste s'il n'y est pas déjà.
 - Signaler un dépôt dont le dossier a disparu (grisé, retirable), sans planter.
@@ -57,7 +57,7 @@ Liste établie à partir des routes de `ungit/source/git-api.js` et des composan
 
 ### 5.3 Zone de travail (staging et commit)
 - Liste des fichiers modifiés, nouveaux, supprimés, renommés et en conflit (`/status`).
-- Diff texte (`/diff`), avec un choix entre vue unifiée et vue côte à côte (choix de Claude), et diff d'images, avant et après (`/diff/image`).
+- Diff texte (`/diff`), avec un choix entre vue unifiée et vue côte à côte (choix d’implémentation), et diff d'images, avant et après (`/diff/image`).
 - Cocher ou décocher des fichiers pour le commit. **Staging partiel par hunk**, comme ungit qui permet de sélectionner des lignes ou des hunks.
 - Annuler les modifications d'un fichier (`/discardchanges`), avec confirmation.
 - Ajouter un fichier au `.gitignore` (`/ignorefile`).
@@ -95,7 +95,7 @@ Liste établie à partir des routes de `ungit/source/git-api.js` et des composan
 - **Rafraîchissement automatique** : surveiller le dossier du dépôt (et `.git`) et recharger l'état ou le graphe après une courte pause. Un bouton de rafraîchissement manuel existe aussi.
 - Panneau d'erreurs git (équivalent de `gitErrors`) : message lisible, avec la commande et la sortie complète repliables.
 - Indicateur d'activité pendant une opération longue.
-- Raccourcis clavier pour les actions courantes : commit, fetch, push, rafraîchir, changer de dépôt (choix de Claude).
+- Raccourcis clavier pour les actions courantes : commit, fetch, push, rafraîchir, changer de dépôt (choix d’implémentation).
 
 ## 6. Interface
 
@@ -130,7 +130,7 @@ Les thèmes sont définis comme des jeux de couleurs nommés (tokens). En ajoute
 ### 6.4 Réglages
 Une fenêtre ou un panneau de réglages regroupe : la langue, le thème, la taille de police de l'interface, l'intervalle du fetch automatique (ou sa désactivation) et la confirmation des actions dangereuses (toujours active pour reset hard, force push et suppression). Ces réglages sont enregistrés dans `config.toml`.
 
-## 7. Choix techniques (choix de Claude, approuvés par l'utilisateur)
+## 7. Choix techniques (validés par l’utilisateur)
 
 - **Langage** : Rust stable (1.99 installé).
 - **Interface** : `egui` / `eframe`. Natif, rapide, binaire unique, et adapté pour dessiner le graphe sur mesure.
@@ -148,7 +148,7 @@ Une fenêtre ou un panneau de réglages regroupe : la langue, le thème, la tail
 - **Releases** : `git flow release start X.Y.Z`, mise à jour de la version dans `Cargo.toml`, puis `git flow release finish` qui crée le tag `vX.Y.Z` sur `main`. Un **paquet `.deb`** est produit pour chaque release.
 - **Paquet `.deb`** : construit avec `cargo-deb`. Il contient le binaire `gigit` dans `/usr/bin`, un fichier `.desktop` (pour le menu des applications) et une icône. Les dépendances déclarées incluent `git`. Le `.deb` produit est rangé dans `target/debian/`.
 
-## 8bis. Précisions issues de la relecture (choix de Claude, sauf mention contraire)
+## 8bis. Précisions issues de la relecture (choix d’implémentation, sauf mention contraire)
 
 - **Staging = le vrai index git.** Contrairement à ungit, qui ne stage qu'au moment du commit, GiGit coche ou décoche en faisant `git add` / `git restore --staged` (ou `git apply --cached` pour un hunk ou une ligne) immédiatement. Ce que l'utilisateur a stagé dans un terminal apparaît donc tel quel, et l'état survit au rafraîchissement et au changement de dépôt. Le panneau de droite montre deux groupes : « Indexé » et « Non indexé ».
 - **Staging partiel par hunk et par ligne** (parité ungit). Désindexer un hunk ou une ligne est inclus. Annuler un hunk (discard) est inclus aussi, avec confirmation. Cas limites à couvrir : fin de fichier sans saut de ligne, CRLF, fichiers binaires (fichier entier uniquement).

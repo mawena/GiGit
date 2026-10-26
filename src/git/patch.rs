@@ -17,10 +17,10 @@ pub enum PatchMode {
     Reverse,
 }
 
-const NO_NEWLINE: &str = "\\ No newline at end of file\n";
+const NO_NEWLINE: &[u8] = b"\\ No newline at end of file\n";
 
-/// One emitted patch line: sign (' ', '+', '-'), text, followed by the no-newline marker.
-type Out<'a> = (char, &'a str, bool);
+/// One emitted patch line: sign (' ', '+', '-'), exact bytes, followed by the no-newline marker.
+type Out<'a> = (char, &'a [u8], bool);
 
 /// Lays out one block of consecutive change lines.
 ///
@@ -37,12 +37,12 @@ fn layout_block<'a>(lines: &[(&'a DiffLine, bool)], mode: PatchMode, out: &mut V
     let fixed: Vec<Out> = lines
         .iter()
         .filter(|(l, _)| l.kind == fixed_kind)
-        .map(|(l, sel)| (if *sel { sign(l.kind) } else { ' ' }, l.text.as_str(), l.no_newline))
+        .map(|(l, sel)| (if *sel { sign(l.kind) } else { ' ' }, l.raw.as_slice(), l.no_newline))
         .collect();
     let moving: Vec<Out> = lines
         .iter()
         .filter(|(l, sel)| l.kind == moving_kind && *sel)
-        .map(|(l, _)| (sign(l.kind), l.text.as_str(), l.no_newline))
+        .map(|(l, _)| (sign(l.kind), l.raw.as_slice(), l.no_newline))
         .collect();
     let split = match mode {
         PatchMode::Forward => fixed.iter().rposition(|o| o.0 != ' ').map_or(fixed.len(), |k| k + 1),
@@ -80,25 +80,28 @@ fn fix_final_newline<'a>(out: Vec<Out<'a>>) -> Vec<Out<'a>> {
     fixed
 }
 
-fn modification_header(header: &[String]) -> Vec<String> {
-    let value = |prefix: &str| {
-        header.iter().find_map(|l| l.strip_prefix(prefix)).filter(|v| *v != "/dev/null").map(str::to_string)
+fn modification_header(header: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    let value = |prefix: &[u8]| {
+        header.iter().find_map(|l| l.strip_prefix(prefix)).filter(|v| *v != b"/dev/null").map(<[u8]>::to_vec)
     };
-    let (old, new) = (value("--- "), value("+++ "));
-    let swap = |v: &str, from: &str, to: &str| match v.strip_prefix('"') {
-        Some(q) => format!("\"{to}{}", q.strip_prefix(from).unwrap_or(q)),
-        None => format!("{to}{}", v.strip_prefix(from).unwrap_or(v)),
+    let (old, new) = (value(b"--- "), value(b"+++ "));
+    let swap = |v: &[u8], from: &[u8], to: &[u8]| -> Vec<u8> {
+        let (quote, rest) = match v.strip_prefix(b"\"") {
+            Some(q) => (&b"\""[..], q),
+            None => (&b""[..], v),
+        };
+        [quote, to, rest.strip_prefix(from).unwrap_or(rest)].concat()
     };
-    let old = old.unwrap_or_else(|| swap(new.as_deref().unwrap_or(""), "b/", "a/"));
-    let new = new.unwrap_or_else(|| swap(&old, "a/", "b/"));
+    let old = old.unwrap_or_else(|| swap(new.as_deref().unwrap_or_default(), b"b/", b"a/"));
+    let new = new.unwrap_or_else(|| swap(&old, b"a/", b"b/"));
     header
         .iter()
-        .filter(|l| !(l.starts_with("new file mode") || l.starts_with("deleted file mode") || l.starts_with("index ")))
+        .filter(|l| !(l.starts_with(b"new file mode") || l.starts_with(b"deleted file mode") || l.starts_with(b"index ")))
         .map(|l| {
-            if l.starts_with("--- ") {
-                format!("--- {old}")
-            } else if l.starts_with("+++ ") {
-                format!("+++ {new}")
+            if l.starts_with(b"--- ") {
+                [&b"--- "[..], &old].concat()
+            } else if l.starts_with(b"+++ ") {
+                [&b"+++ "[..], &new].concat()
             } else {
                 l.clone()
             }
@@ -106,8 +109,8 @@ fn modification_header(header: &[String]) -> Vec<String> {
         .collect()
 }
 
-pub fn build_patch(file: &FileDiff, sel: &LineSel, mode: PatchMode) -> Option<String> {
-    let mut body = String::new();
+pub fn build_patch(file: &FileDiff, sel: &LineSel, mode: PatchMode) -> Option<Vec<u8>> {
+    let mut body: Vec<u8> = Vec::new();
     let mut offset: i64 = 0;
     for (h, hunk) in file.hunks.iter().enumerate() {
         let selected = |i: usize| hunk.lines[i].kind != LineKind::Context && sel.contains(&(h, i));
@@ -119,7 +122,7 @@ pub fn build_patch(file: &FileDiff, sel: &LineSel, mode: PatchMode) -> Option<St
         while i < hunk.lines.len() {
             let l = &hunk.lines[i];
             if l.kind == LineKind::Context {
-                out.push((' ', l.text.as_str(), l.no_newline));
+                out.push((' ', l.raw.as_slice(), l.no_newline));
                 i += 1;
                 continue;
             }
@@ -133,14 +136,19 @@ pub fn build_patch(file: &FileDiff, sel: &LineSel, mode: PatchMode) -> Option<St
         let out = fix_final_newline(out);
         let old_len = out.iter().filter(|o| o.0 != '+').count() as i64;
         let new_len = out.iter().filter(|o| o.0 != '-').count() as i64;
-        let new_start = i64::from(hunk.old_start) + offset;
-        body.push_str(&format!("@@ -{},{old_len} +{new_start},{new_len} @@\n", hunk.old_start));
+        // Anchor on the side git will search: the old side when applying forward, the new side
+        // (the real current content, including unselected earlier hunks) when applying in reverse.
+        let (old_start, new_start) = match mode {
+            PatchMode::Forward => (i64::from(hunk.old_start), i64::from(hunk.old_start) + offset),
+            PatchMode::Reverse => (i64::from(hunk.new_start) - offset, i64::from(hunk.new_start)),
+        };
+        body.extend_from_slice(format!("@@ -{old_start},{old_len} +{new_start},{new_len} @@\n").as_bytes());
         for (sign, text, nonl) in out {
-            body.push(sign);
-            body.push_str(text);
-            body.push('\n');
+            body.push(sign as u8);
+            body.extend_from_slice(text);
+            body.push(b'\n');
             if nonl {
-                body.push_str(NO_NEWLINE);
+                body.extend_from_slice(NO_NEWLINE);
             }
         }
         offset += new_len - old_len;
@@ -159,14 +167,14 @@ pub fn build_patch(file: &FileDiff, sel: &LineSel, mode: PatchMode) -> Option<St
             PatchMode::Reverse => file.old_path.is_none(),
         };
     let header = if as_modification { modification_header(&file.header) } else { file.header.clone() };
-    let mut patch = header.join("\n");
-    patch.push('\n');
-    patch.push_str(&body);
+    let mut patch = header.join(&b'\n');
+    patch.push(b'\n');
+    patch.extend_from_slice(&body);
     Some(patch)
 }
 
 /// `git apply [--cached] [--reverse] --recount -` with the patch on stdin.
-pub fn apply_patch(repo: &Path, patch: &str, cached: bool, reverse: bool) -> Result<(), GitError> {
+pub fn apply_patch(repo: &Path, patch: &[u8], cached: bool, reverse: bool) -> Result<(), GitError> {
     let mut args = vec!["apply", "--recount", "--whitespace=nowarn"];
     if cached {
         args.push("--cached");
@@ -175,7 +183,7 @@ pub fn apply_patch(repo: &Path, patch: &str, cached: bool, reverse: bool) -> Res
         args.push("--reverse");
     }
     args.push("-");
-    let opts = RunOpts { stdin: Some(patch.as_bytes().to_vec()), ..Default::default() };
+    let opts = RunOpts { stdin: Some(patch.to_vec()), ..Default::default() };
     run(repo, &args, &opts).map(|_| ())
 }
 
@@ -188,7 +196,11 @@ mod tests {
     const HDR: &str = "diff --git a/f b/f\n--- a/f\n+++ b/f\n";
 
     fn file(body: &str) -> FileDiff {
-        parse_diff(&format!("{HDR}{body}")).remove(0)
+        parse_diff(format!("{HDR}{body}").as_bytes()).remove(0)
+    }
+
+    fn text(p: Option<Vec<u8>>) -> String {
+        String::from_utf8(p.expect("a patch")).unwrap()
     }
 
     fn sel(pairs: &[(usize, usize)]) -> LineSel {
@@ -211,35 +223,35 @@ mod tests {
     fn whole_hunk_selection_reproduces_hunk() {
         let body = "@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n";
         let f = file(body);
-        let p = build_patch(&f, &all_changes(&f), PatchMode::Forward).unwrap();
+        let p = text(build_patch(&f, &all_changes(&f), PatchMode::Forward));
         assert_eq!(p, format!("{HDR}{body}"));
     }
 
     #[test]
     fn forward_unselected_removed_becomes_context() {
         let f = file("@@ -1 +1 @@\n-a\n+b\n");
-        let p = build_patch(&f, &sel(&[(0, 1)]), PatchMode::Forward).unwrap();
+        let p = text(build_patch(&f, &sel(&[(0, 1)]), PatchMode::Forward));
         assert_eq!(p, format!("{HDR}@@ -1,1 +1,2 @@\n a\n+b\n"));
     }
 
     #[test]
     fn reverse_unselected_added_becomes_context() {
         let f = file("@@ -1 +1 @@\n-a\n+b\n");
-        let p = build_patch(&f, &sel(&[(0, 0)]), PatchMode::Reverse).unwrap();
+        let p = text(build_patch(&f, &sel(&[(0, 0)]), PatchMode::Reverse));
         assert_eq!(p, format!("{HDR}@@ -1,2 +1,1 @@\n-a\n b\n"));
     }
 
     #[test]
     fn forward_unselected_added_is_dropped() {
         let f = file("@@ -1,1 +1,3 @@\n a\n+b\n+c\n");
-        let p = build_patch(&f, &sel(&[(0, 2)]), PatchMode::Forward).unwrap();
+        let p = text(build_patch(&f, &sel(&[(0, 2)]), PatchMode::Forward));
         assert_eq!(p, format!("{HDR}@@ -1,1 +1,2 @@\n a\n+c\n"));
     }
 
     #[test]
     fn second_hunk_new_start_uses_offset() {
         let f = file("@@ -1,1 +1,3 @@\n a\n+x\n+y\n@@ -10,2 +12,2 @@\n p\n-q\n+Q\n");
-        let p = build_patch(&f, &sel(&[(0, 1), (0, 2), (1, 2)]), PatchMode::Forward).unwrap();
+        let p = text(build_patch(&f, &sel(&[(0, 1), (0, 2), (1, 2)]), PatchMode::Forward));
         assert!(p.contains("@@ -1,1 +1,3 @@\n"), "{p}");
         // q stays (unselected removal ⇒ context), Q is added: old 2 lines, new 3 lines, shifted by +2.
         assert!(p.contains("@@ -10,2 +12,3 @@\n p\n q\n+Q\n"), "{p}");
@@ -248,7 +260,7 @@ mod tests {
     #[test]
     fn unselected_hunk_is_skipped_and_does_not_shift() {
         let f = file("@@ -1,1 +1,3 @@\n a\n+x\n+y\n@@ -10,2 +12,2 @@\n p\n-q\n+Q\n");
-        let p = build_patch(&f, &sel(&[(1, 1), (1, 2)]), PatchMode::Forward).unwrap();
+        let p = text(build_patch(&f, &sel(&[(1, 1), (1, 2)]), PatchMode::Forward));
         assert!(!p.contains("@@ -1,"), "{p}");
         assert!(p.contains("@@ -10,2 +10,2 @@\n p\n-q\n+Q\n"), "{p}");
     }
@@ -265,7 +277,7 @@ mod tests {
     #[test]
     fn no_newline_marker_kept() {
         let f = file("@@ -1 +1 @@\n-a\n+x\n\\ No newline at end of file\n");
-        let p = build_patch(&f, &all_changes(&f), PatchMode::Forward).unwrap();
+        let p = text(build_patch(&f, &all_changes(&f), PatchMode::Forward));
         assert!(p.ends_with("+x\n\\ No newline at end of file\n"), "{p}");
     }
 

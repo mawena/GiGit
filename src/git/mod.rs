@@ -34,6 +34,8 @@ pub struct RunOpts {
     pub stdin: Option<Vec<u8>>,
     /// Treat exit code 1 as success (e.g. `diff --no-index`).
     pub allow_exit_1: bool,
+    /// Do not force literal pathspecs (for commands that reject them, like `check-ignore`).
+    pub pathspec_magic: bool,
 }
 
 fn build_command(repo: &Path, args: &[&str], opts: &RunOpts) -> Command {
@@ -46,8 +48,20 @@ fn build_command(repo: &Path, args: &[&str], opts: &RunOpts) -> Command {
         .stdin(if opts.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if !opts.pathspec_magic {
+        // Paths are file names, never glob patterns (`f[1].txt` must not match `f1.txt`).
+        cmd.env("GIT_LITERAL_PATHSPECS", "1");
+    }
     if opts.read_only {
         cmd.env("GIT_OPTIONAL_LOCKS", "0");
+    }
+    if opts.background {
+        // Nobody asked for this command: never pop up a password dialog (desktop askpass helpers,
+        // an editor's GIT_ASKPASS, Git Credential Manager…).
+        cmd.env("GIT_ASKPASS", "false")
+            .env("SSH_ASKPASS", "false")
+            .env("SSH_ASKPASS_REQUIRE", "never")
+            .env("GCM_INTERACTIVE", "never");
     }
     // Detach from any controlling terminal so ssh cannot prompt on a tty.
     unsafe {
@@ -163,8 +177,21 @@ mod tests {
         let plain = build_command(p, &["status"], &RunOpts::default());
         assert_eq!(env_of(&plain, "GIT_TERMINAL_PROMPT").as_deref(), Some("0"));
         assert_eq!(env_of(&plain, "GIT_OPTIONAL_LOCKS"), None);
+        assert_eq!(env_of(&plain, "GIT_LITERAL_PATHSPECS").as_deref(), Some("1"));
         let ro = build_command(p, &["status"], &RunOpts { read_only: true, ..Default::default() });
         assert_eq!(env_of(&ro, "GIT_OPTIONAL_LOCKS").as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn background_commands_never_ask_for_credentials() {
+        let p = Path::new("/");
+        let bg = build_command(p, &["fetch"], &RunOpts { background: true, ..Default::default() });
+        for (k, v) in [("GIT_ASKPASS", "false"), ("SSH_ASKPASS", "false"), ("SSH_ASKPASS_REQUIRE", "never"), ("GCM_INTERACTIVE", "never")] {
+            assert_eq!(env_of(&bg, k).as_deref(), Some(v), "{k}");
+        }
+        // User-initiated commands keep the user's own askpass helpers.
+        let fg = build_command(p, &["push"], &RunOpts::default());
+        assert_eq!(env_of(&fg, "GIT_ASKPASS"), None);
     }
 
     #[test]
