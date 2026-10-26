@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum ThemeChoice {
     System,
     #[default]
+    Ardoise,
     SombreChaleureux,
     Nuit,
     Clair,
@@ -16,6 +17,7 @@ use eframe::egui::{self, Color32};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
+    Ardoise,
     SombreChaleureux,
     Nuit,
     Clair,
@@ -36,6 +38,9 @@ pub struct Palette {
     pub added: Color32,
     pub deleted: Color32,
     pub conflict: Color32,
+    /// Remote branch labels (blue in ungit) and tag labels (yellow in ungit).
+    pub remote: Color32,
+    pub tag: Color32,
     pub lanes: &'static [Color32],
     pub dark: bool,
 }
@@ -43,6 +48,38 @@ pub struct Palette {
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
+
+/// Dark mode of the Vuexy/Vuetify theme (as in Cofina Report): neutral greys, lavender text,
+/// violet primary, bluish cards. The primary is darkened a hair (#7367F0 → #6E63E6) so white
+/// button text reaches a 4.5:1 contrast.
+static ARDOISE: Palette = Palette {
+    bg: rgb(0x212121),
+    sidebar: rgb(0x252526),
+    panel: rgb(0x2f3349),
+    border: rgb(0x404146),
+    selection: rgb(0x302e46),
+    text: rgb(0xd0d4f1),
+    muted: rgb(0xa8aaae),
+    accent: rgb(0x6e63e6),
+    on_accent: rgb(0xffffff),
+    modified: rgb(0xff9f43),
+    added: rgb(0x28c76f),
+    deleted: rgb(0xea5455),
+    conflict: rgb(0xea5455),
+    remote: rgb(0x00cfe8),
+    tag: rgb(0xffd166),
+    lanes: &[
+        rgb(0x7367f0),
+        rgb(0x28c76f),
+        rgb(0x00cfe8),
+        rgb(0xff9f43),
+        rgb(0xea5455),
+        rgb(0xb9a6ff),
+        rgb(0xffd166),
+        rgb(0x4dd4ac),
+    ],
+    dark: true,
+};
 
 static SOMBRE_CHALEUREUX: Palette = Palette {
     bg: rgb(0x1e1e2e),
@@ -58,6 +95,8 @@ static SOMBRE_CHALEUREUX: Palette = Palette {
     added: rgb(0xa6e3a1),
     deleted: rgb(0xf38ba8),
     conflict: rgb(0xfab387),
+    remote: rgb(0x89b4fa),
+    tag: rgb(0xf9e2af),
     lanes: &[
         rgb(0xf5a97f),
         rgb(0xcba6f7),
@@ -85,6 +124,8 @@ static NUIT: Palette = Palette {
     added: rgb(0x5fd3a6),
     deleted: rgb(0xf07178),
     conflict: rgb(0xff9e64),
+    remote: rgb(0x5ccfe6),
+    tag: rgb(0xe5b454),
     lanes: &[
         rgb(0x7c9cff),
         rgb(0xf78fb3),
@@ -112,6 +153,8 @@ static CLAIR: Palette = Palette {
     added: rgb(0x15803d),
     deleted: rgb(0xdc2626),
     conflict: rgb(0xea580c),
+    remote: rgb(0x0e7490),
+    tag: rgb(0x8a5a00),
     lanes: &[
         rgb(0x3b6cf6),
         rgb(0xe0457b),
@@ -127,6 +170,7 @@ static CLAIR: Palette = Palette {
 
 pub fn palette(t: Theme) -> &'static Palette {
     match t {
+        Theme::Ardoise => &ARDOISE,
         Theme::SombreChaleureux => &SOMBRE_CHALEUREUX,
         Theme::Nuit => &NUIT,
         Theme::Clair => &CLAIR,
@@ -135,12 +179,13 @@ pub fn palette(t: Theme) -> &'static Palette {
 
 pub fn resolve(choice: ThemeChoice) -> Theme {
     match choice {
+        ThemeChoice::Ardoise => Theme::Ardoise,
         ThemeChoice::SombreChaleureux => Theme::SombreChaleureux,
         ThemeChoice::Nuit => Theme::Nuit,
         ThemeChoice::Clair => Theme::Clair,
         ThemeChoice::System => match dark_light::detect() {
             Ok(dark_light::Mode::Light) => Theme::Clair,
-            _ => Theme::SombreChaleureux,
+            _ => Theme::Ardoise,
         },
     }
 }
@@ -235,7 +280,34 @@ pub fn install_fonts(ctx: &egui::Context) {
 mod tests {
     use super::*;
 
-    const ALL: [Theme; 3] = [Theme::SombreChaleureux, Theme::Nuit, Theme::Clair];
+    const ALL: [Theme; 4] = [Theme::Ardoise, Theme::SombreChaleureux, Theme::Nuit, Theme::Clair];
+
+    #[test]
+    fn ardoise_exact_values() {
+        // Dark mode of the Vuexy/Vuetify theme used by Cofina Report.
+        let p = palette(Theme::Ardoise);
+        let got: Vec<String> =
+            [p.bg, p.sidebar, p.panel, p.border, p.selection, p.text, p.muted, p.accent].map(hex).to_vec();
+        assert_eq!(got, ["#212121", "#252526", "#2f3349", "#404146", "#302e46", "#d0d4f1", "#a8aaae", "#6e63e6"]);
+        assert_eq!([p.added, p.modified, p.deleted].map(hex), ["#28c76f", "#ff9f43", "#ea5455"]);
+        assert_eq!([p.remote, p.tag].map(hex), ["#00cfe8", "#ffd166"]);
+        assert!(p.dark);
+    }
+
+    #[test]
+    fn ref_label_colours_are_readable() {
+        for t in ALL {
+            let p = palette(t);
+            assert!(contrast(p.remote, p.bg) >= 4.5, "{t:?} remote");
+            assert!(contrast(p.tag, p.bg) >= 4.5, "{t:?} tag");
+        }
+    }
+
+    #[test]
+    fn ardoise_is_the_default() {
+        assert_eq!(ThemeChoice::default(), ThemeChoice::Ardoise);
+        assert_eq!(resolve(ThemeChoice::Ardoise), Theme::Ardoise);
+    }
 
     fn hex(c: Color32) -> String {
         format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())

@@ -75,6 +75,7 @@ pub struct AppState {
     pub show_settings: bool,
     /// Probes, inits and watcher setups still running off the UI thread.
     pub background_tasks: usize,
+    pub avatars: crate::avatar::AvatarStore,
     pub wake: Wake,
     results_tx: Sender<(PathBuf, JobResult)>,
     results_rx: Receiver<(PathBuf, JobResult)>,
@@ -118,6 +119,7 @@ impl AppState {
             pending: None,
             show_settings: false,
             background_tasks: 0,
+            avatars: crate::avatar::AvatarStore::new(crate::avatar::cache_dir(), crate::avatar::http_fetch()),
             wake,
             results_tx,
             results_rx,

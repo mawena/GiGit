@@ -18,6 +18,7 @@ GiGit est une vraie application de bureau. Tes dépôts restent listés sur le c
   - Les autres branches ont chacune leur colonne.
   - Le nom des branches et des tags est écrit à côté des nœuds.
   - L'historique se charge par pages, ce qui garde GiGit fluide même sur les gros dépôts.
+- **Avatars des auteurs**, comme dans ungit : Gravatar, ou l'avatar GitHub pour les adresses `noreply` de GitHub. Les images sont gardées en cache, et les initiales s'affichent quand il n'y a pas d'avatar. Tu peux les désactiver dans les réglages.
 - **Détail d'un commit** : message, auteur, date, parents cliquables, fichiers modifiés et leur diff.
 - **Indexation précise.**
   - Coche un fichier pour l'indexer, ou sélectionne seulement certains **blocs** ou **lignes** du diff. Shift+clic sélectionne une plage de lignes.
@@ -29,7 +30,7 @@ GiGit est une vraie application de bureau. Tes dépôts restent listés sur le c
 - **Fetch automatique** du dépôt ouvert, toutes les 5 minutes par défaut et réglable.
 - **Rafraîchissement automatique** : GiGit voit tout de suite les changements que tu fais dans ton éditeur ou ton terminal.
 - **Français et anglais.** Par défaut, GiGit suit la langue du système.
-- **Thèmes** : Sombre chaleureux (par défaut), Nuit, Clair ou Système.
+- **Thèmes** : Ardoise (par défaut, inspiré du mode sombre de Vuexy), Sombre chaleureux, Nuit, Clair ou Système.
 - **Une seule fenêtre** : `gigit .` lancé depuis un terminal ouvre le dossier dans la fenêtre GiGit déjà ouverte.
 - **Erreurs git claires.** Le message s'affiche dans un bandeau, et la commande comme la sortie complète restent consultables.
 
@@ -53,8 +54,8 @@ GiGit lance la commande `git` installée sur ta machine. Ta configuration, tes h
 Télécharge le `.deb` de la [dernière release](https://github.com/mawena/GiGit/releases/latest), puis installe-le :
 
 ```bash
-wget https://github.com/mawena/GiGit/releases/download/v0.1.0/gigit_0.1.0-1_amd64.deb
-sudo apt install ./gigit_0.1.0-1_amd64.deb
+wget https://github.com/mawena/GiGit/releases/download/v0.1.1/gigit_0.1.1-1_amd64.deb
+sudo apt install ./gigit_0.1.1-1_amd64.deb
 ```
 
 Pour désinstaller : `sudo apt remove gigit`. Tes réglages restent dans `~/.config/gigit/`.
@@ -138,6 +139,7 @@ It is a native desktop app with a persistent sidebar of repositories: one click 
   - Each other branch gets its own column.
   - Branch and tag labels sit next to the nodes.
   - History loads in pages, so large repositories stay smooth.
+- **Author avatars**, as in ungit: Gravatar, or the GitHub avatar for GitHub `noreply` addresses. Images are cached, initials are shown when there is no avatar, and avatars can be turned off in the settings.
 - **Commit details**: message, author, date, clickable parents, changed files and their diffs.
 - **Real-index staging.** Stage whole files, single **hunks** or individual **lines** (Shift+click selects a range).
 - **Commit and amend** (`Ctrl+Enter` commits).
@@ -147,7 +149,7 @@ It is a native desktop app with a persistent sidebar of repositories: one click 
 - **Automatic background fetch** of the open repository.
 - **Auto-refresh** when files change on disk.
 - **French and English** interface.
-- **Themes**: Warm dark (default), Night, Light, or System.
+- **Themes**: Slate (default, inspired by Vuexy's dark mode), Warm dark, Night, Light, or System.
 - **Single window**: `gigit <folder>` opens the folder in the already running window.
 
 GiGit runs your installed `git` binary, so your configuration, hooks, SSH agent and credential helpers just work.
@@ -157,8 +159,8 @@ GiGit runs your installed `git` binary, so your configuration, hooks, SSH agent 
 Download the `.deb` from the [latest release](https://github.com/mawena/GiGit/releases/latest), then:
 
 ```bash
-wget https://github.com/mawena/GiGit/releases/download/v0.1.0/gigit_0.1.0-1_amd64.deb
-sudo apt install ./gigit_0.1.0-1_amd64.deb
+wget https://github.com/mawena/GiGit/releases/download/v0.1.1/gigit_0.1.1-1_amd64.deb
+sudo apt install ./gigit_0.1.1-1_amd64.deb
 ```
 
 To build from source, use `cargo build --release`. To build the Debian package, run `cargo install cargo-deb`, then `cargo deb`.

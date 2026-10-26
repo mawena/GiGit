@@ -51,6 +51,21 @@ fn branch_color(p: &Palette, name: Option<&str>) -> Color32 {
     }
 }
 
+/// The author's picture (already masked round), or their initials on a colour from their name.
+pub fn avatar_circle(painter: &egui::Painter, p: &Palette, center: Pos2, r: f32, author: &str, avatar: Option<egui::TextureId>) {
+    match avatar {
+        Some(tex) => {
+            let rect = Rect::from_center_size(center, vec2(r * 2.0, r * 2.0));
+            painter.image(tex, rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
+        None => {
+            painter.circle_filled(center, r, p.lanes[name_hash(author) % p.lanes.len()]);
+            let font = FontId::new(r * 0.76, FontFamily::Name("semibold".into()));
+            painter.text(center, Align2::CENTER_CENTER, initials(author), font, p.on_accent);
+        }
+    }
+}
+
 fn initials(name: &str) -> String {
     name.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect::<String>().to_uppercase()
 }
@@ -72,7 +87,18 @@ impl Geometry {
 
 /// Commit card on the left of the main line, with an arrow pointing at the node.
 #[allow(clippy::too_many_arguments)]
-fn card(painter: &egui::Painter, p: &Palette, lang: Lang, now: i64, g: &Geometry, center: Pos2, c: &Commit, selected: bool, faded: bool) -> Rect {
+fn card(
+    painter: &egui::Painter,
+    p: &Palette,
+    lang: Lang,
+    now: i64,
+    g: &Geometry,
+    center: Pos2,
+    c: &Commit,
+    selected: bool,
+    faded: bool,
+    avatar: Option<egui::TextureId>,
+) -> Rect {
     let rect = Rect::from_min_size(pos2(g.origin.x + 10.0, center.y - CARD_H / 2.0), vec2(g.card_w, CARD_H));
     let alpha = if faded { 0.85 } else { 1.0 };
     let fill = p.panel.gamma_multiply(alpha);
@@ -87,9 +113,7 @@ fn card(painter: &egui::Painter, p: &Palette, lang: Lang, now: i64, g: &Geometry
         Stroke::NONE,
     ));
     // avatar
-    let av = pos2(rect.left() + 28.0, rect.center().y);
-    painter.circle_filled(av, 17.0, p.lanes[name_hash(&c.author) % p.lanes.len()]);
-    painter.text(av, Align2::CENTER_CENTER, initials(&c.author), FontId::new(13.0, FontFamily::Name("semibold".into())), p.on_accent);
+    avatar_circle(painter, p, pos2(rect.left() + 28.0, rect.center().y), 17.0, &c.author, avatar);
     let text_x = rect.left() + 56.0;
     let clip = Rect::from_min_max(pos2(text_x, rect.top()), pos2(rect.right() - 10.0, rect.bottom()));
     let tp = painter.with_clip_rect(clip.intersect(painter.clip_rect()));
@@ -111,8 +135,8 @@ fn labels(painter: &egui::Painter, p: &Palette, at: Pos2, refs: &[&Ref], current
         let (icon, color, size) = match r.kind {
             RefKind::LocalBranch if is_current => ("⎇", p.text, 19.0),
             RefKind::LocalBranch => ("⎇", p.text.gamma_multiply(0.65), 15.0),
-            RefKind::RemoteBranch => ("⎇", p.lanes[3 % p.lanes.len()].gamma_multiply(0.9), 15.0),
-            RefKind::Tag => ("🏷", p.modified.gamma_multiply(0.9), 15.0),
+            RefKind::RemoteBranch => ("⎇", p.remote, 15.0),
+            RefKind::Tag => ("🏷", p.tag, 15.0),
             RefKind::Head => ("➤", p.accent, 15.0),
         };
         let font = if is_current { FontId::new(size, FontFamily::Name("semibold".into())) } else { FontId::proportional(size) };
@@ -126,6 +150,8 @@ fn labels(painter: &egui::Painter, p: &Palette, at: Pos2, refs: &[&Ref], current
 pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
     let p = theme::palette(state.theme);
     let lang = state.lang;
+    let show_avatars = state.config.avatars;
+    let avatars = &mut state.avatars;
     let Some(v) = state.open.as_mut() else { return };
     let Some(snap) = v.snapshot.as_ref() else {
         ui.centered_and_justified(|ui| ui.spinner());
@@ -191,7 +217,8 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
             let commit = &snap.commits[n.commit];
             let selected = selected_id.as_deref() == Some(commit.id.as_str());
             if n.main || selected || hovered == Some(k) {
-                let card_rect = card(painter, p, lang, now, &g, pos2(c.x, c.y), commit, selected, !n.main);
+                let avatar = show_avatars.then(|| avatars.get(ui.ctx(), &commit.email)).flatten().map(|t| t.id());
+                let card_rect = card(painter, p, lang, now, &g, pos2(c.x, c.y), commit, selected, !n.main, avatar);
                 if resp.clicked() && pointer.is_some_and(|pt| card_rect.contains(pt)) {
                     clicked = Some(commit.id.clone());
                 }

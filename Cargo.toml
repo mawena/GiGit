@@ -1,6 +1,6 @@
 [package]
 name = "gigit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Client git graphique inspiré d'ungit / A friendly graphical git client inspired by ungit"
@@ -15,13 +15,16 @@ anyhow = "1.0.104"
 dark-light = "3.0.0"
 directories = "6.0.0"
 eframe = "0.37.0"
+image = { version = "0.25.9", default-features = false, features = ["png", "jpeg"] }
 libc = "0.2.191"
+md-5 = "0.11.0"
 notify = "8.2.1"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 sys-locale = "0.3.2"
 thiserror = "2.0.21"
 toml = "1.1.8"
+ureq = "3.5.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
