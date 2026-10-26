@@ -34,6 +34,8 @@ pub struct RunOpts {
     pub stdin: Option<Vec<u8>>,
     /// Treat exit code 1 as success (e.g. `diff --no-index`).
     pub allow_exit_1: bool,
+    /// Do not force literal pathspecs (for commands that reject them, like `check-ignore`).
+    pub pathspec_magic: bool,
 }
 
 fn build_command(repo: &Path, args: &[&str], opts: &RunOpts) -> Command {
@@ -43,11 +45,13 @@ fn build_command(repo: &Path, args: &[&str], opts: &RunOpts) -> Command {
         .args(args)
         // No askpass bridge yet: a credential prompt must fail fast, never hang.
         .env("GIT_TERMINAL_PROMPT", "0")
-        // Paths are file names, never glob patterns (`f[1].txt` must not match `f1.txt`).
-        .env("GIT_LITERAL_PATHSPECS", "1")
         .stdin(if opts.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if !opts.pathspec_magic {
+        // Paths are file names, never glob patterns (`f[1].txt` must not match `f1.txt`).
+        cmd.env("GIT_LITERAL_PATHSPECS", "1");
+    }
     if opts.read_only {
         cmd.env("GIT_OPTIONAL_LOCKS", "0");
     }

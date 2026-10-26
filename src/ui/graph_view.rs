@@ -245,7 +245,7 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
     }
     if near_end && snap.has_more && !v.loading_more {
         v.loading_more = true;
-        v.worker.send(Job::LoadMore { skip: snap.commits.len() });
+        v.worker.send(Job::LoadMore);
     }
 }
 

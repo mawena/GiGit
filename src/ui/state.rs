@@ -7,14 +7,13 @@ use std::time::Instant;
 
 use crate::config::{self, Config, RepoProbe};
 use crate::git::{GitError, status};
-use crate::graph;
 use crate::git::diff::{DiffSide, FileDiff};
 use crate::git::log::Commit;
 use crate::git::patch::LineSel;
 use crate::i18n::{self, Lang};
 use crate::theme::{self, Theme};
 use crate::watch::{self, WatchGuard};
-use crate::worker::{Job, JobResult, PAGE, RepoWorker, Snapshot, Wake};
+use crate::worker::{Job, JobResult, RepoWorker, Snapshot, Wake};
 
 pub struct RepoView {
     pub path: PathBuf,
@@ -253,14 +252,6 @@ impl AppState {
                 }
                 v.snapshot = Some(snap);
                 v.loading_more = false;
-            }
-            JobResult::More { commits } => {
-                v.loading_more = false;
-                if let Some(snap) = v.snapshot.as_mut() {
-                    snap.has_more = commits.len() == PAGE;
-                    snap.commits.extend(commits);
-                    snap.layout = graph::layout(&snap.commits, &snap.refs);
-                }
             }
             JobResult::Diff { path: file, side, diff } => {
                 if v.selected_file.as_ref() == Some(&(file, side)) {

@@ -20,7 +20,8 @@ pub const PAGE: usize = 500;
 pub enum Job {
     /// Status, refs and the first page of history.
     Refresh,
-    LoadMore { skip: usize },
+    /// Loads one more page of history (the whole loaded range is returned as a new snapshot).
+    LoadMore,
     Diff { path: String, side: DiffSide },
     Show { id: String },
     Stage(Vec<String>),
@@ -48,7 +49,6 @@ pub struct Snapshot {
 #[derive(Debug)]
 pub enum JobResult {
     Snapshot(Snapshot),
-    More { commits: Vec<Commit> },
     Diff { path: String, side: DiffSide, diff: Option<FileDiff> },
     Show { commit: Commit, files: Vec<FileDiff> },
     Done { job: &'static str },
@@ -66,12 +66,17 @@ pub struct RepoWorker {
 impl RepoWorker {
     /// Starts the worker thread. It stops when the `RepoWorker` is dropped.
     pub fn spawn(repo: PathBuf, out: Sender<(PathBuf, JobResult)>, wake: Wake) -> Self {
+        Self::spawn_with_page(repo, PAGE, out, wake)
+    }
+
+    /// Like `spawn`, with a custom history page size.
+    pub fn spawn_with_page(repo: PathBuf, page: usize, out: Sender<(PathBuf, JobResult)>, wake: Wake) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let busy = Arc::new(AtomicBool::new(false));
         let (r, b) = (repo.clone(), busy.clone());
         std::thread::Builder::new()
             .name("gigit-worker".into())
-            .spawn(move || worker_loop(r, rx, out, b, wake))
+            .spawn(move || worker_loop(r, page, rx, out, b, wake))
             .expect("spawn worker thread");
         RepoWorker { repo, tx, busy }
     }
@@ -90,20 +95,31 @@ impl RepoWorker {
     }
 }
 
-fn snapshot(repo: &std::path::Path) -> Result<Snapshot, GitError> {
+/// Status, refs and the first `loaded` commits of history.
+fn snapshot(repo: &std::path::Path, loaded: usize) -> Result<Snapshot, GitError> {
     let status = status::status(repo)?;
     let refs = log::refs(repo)?;
-    let commits = log::log(repo, 0, PAGE)?;
+    let commits = log::log(repo, 0, loaded)?;
     let layout = crate::graph::layout(&commits, &refs);
-    let has_more = commits.len() == PAGE;
+    let has_more = commits.len() == loaded;
     Ok(Snapshot { status, refs, commits, layout, has_more })
 }
 
+/// How much history a worker keeps loaded: refreshes reload all of it, so browsing deep
+/// history survives file changes.
+struct History {
+    page: usize,
+    loaded: usize,
+}
+
 /// Runs one job. `Ok(None)` means a mutating job succeeded and a refresh must follow.
-fn run_job(repo: &std::path::Path, job: Job) -> Result<Option<JobResult>, GitError> {
+fn run_job(repo: &std::path::Path, job: Job, history: &mut History) -> Result<Option<JobResult>, GitError> {
     Ok(Some(match job {
-        Job::Refresh => JobResult::Snapshot(snapshot(repo)?),
-        Job::LoadMore { skip } => JobResult::More { commits: log::log(repo, skip, PAGE)? },
+        Job::Refresh => JobResult::Snapshot(snapshot(repo, history.loaded)?),
+        Job::LoadMore => {
+            history.loaded += history.page;
+            JobResult::Snapshot(snapshot(repo, history.loaded)?)
+        }
         Job::Diff { path, side } => {
             let diff = diff::diff_file(repo, &path, side)?;
             JobResult::Diff { path, side, diff }
@@ -132,7 +148,7 @@ fn run_job(repo: &std::path::Path, job: Job) -> Result<Option<JobResult>, GitErr
 fn job_name(job: &Job) -> &'static str {
     match job {
         Job::Refresh => "refresh",
-        Job::LoadMore { .. } => "load_more",
+        Job::LoadMore => "load_more",
         Job::Diff { .. } => "diff",
         Job::Show { .. } => "show",
         Job::Stage(_) => "stage",
@@ -149,8 +165,16 @@ fn job_name(job: &Job) -> &'static str {
     }
 }
 
-fn worker_loop(repo: PathBuf, rx: Receiver<Job>, out: Sender<(PathBuf, JobResult)>, busy: Arc<AtomicBool>, wake: Wake) {
+fn worker_loop(
+    repo: PathBuf,
+    page: usize,
+    rx: Receiver<Job>,
+    out: Sender<(PathBuf, JobResult)>,
+    busy: Arc<AtomicBool>,
+    wake: Wake,
+) {
     let mut queue: VecDeque<Job> = VecDeque::new();
+    let mut history = History { page, loaded: page };
     let send = |r: JobResult| {
         let ok = out.send((repo.clone(), r)).is_ok();
         wake();
@@ -174,7 +198,7 @@ fn worker_loop(repo: PathBuf, rx: Receiver<Job>, out: Sender<(PathBuf, JobResult
         while let Some(j) = job.take() {
             let name = job_name(&j);
             let background = matches!(j, Job::Fetch { background: true });
-            let result = match run_job(&repo, j) {
+            let result = match run_job(&repo, j, &mut history) {
                 Ok(Some(r)) => r,
                 Ok(None) => {
                     queue.retain(|j| !matches!(j, Job::Refresh));
@@ -286,11 +310,30 @@ mod tests {
         commit_all(&repo, "one");
         write(&repo, "f", "b\n");
         let (w, rx) = spawn(&repo);
-        w.send(Job::LoadMore { skip: 0 });
-        assert!(matches!(next(&rx), JobResult::More { commits } if commits.len() == 1));
+        w.send(Job::LoadMore);
+        assert!(matches!(next(&rx), JobResult::Snapshot(s) if s.commits.len() == 1));
         w.send(Job::Diff { path: "f".into(), side: DiffSide::Unstaged });
         assert!(matches!(next(&rx), JobResult::Diff { diff: Some(_), .. }));
         w.send(Job::Show { id: "HEAD".into() });
         assert!(matches!(next(&rx), JobResult::Show { commit, .. } if commit.subject == "one"));
+    }
+
+    #[test]
+    fn refresh_keeps_loaded_history() {
+        let (_d, repo) = temp_repo();
+        for i in 0..7 {
+            write(&repo, "f", &i.to_string());
+            commit_all(&repo, &format!("c{i}"));
+        }
+        let (tx, rx) = channel();
+        let w = RepoWorker::spawn_with_page(repo.clone(), 3, tx, Arc::new(|| {}));
+        w.send(Job::Refresh);
+        assert!(matches!(next(&rx), JobResult::Snapshot(s) if s.commits.len() == 3 && s.has_more));
+        w.send(Job::LoadMore);
+        assert!(matches!(next(&rx), JobResult::Snapshot(s) if s.commits.len() == 6 && s.has_more));
+        w.send(Job::Refresh);
+        assert!(matches!(next(&rx), JobResult::Snapshot(s) if s.commits.len() == 6));
+        w.send(Job::LoadMore);
+        assert!(matches!(next(&rx), JobResult::Snapshot(s) if s.commits.len() == 7 && !s.has_more));
     }
 }
