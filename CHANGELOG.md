@@ -3,7 +3,7 @@
 Toutes les modifications notables de GiGit sont listées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet utilise le [versionnage sémantique](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [0.1.1] - 2026-10-26
 
 ### Ajouté
 
@@ -49,4 +49,5 @@ Première version publique.
 - Les opérations confirmées ne s'exécutent que sur le dépôt pour lequel elles ont été confirmées.
 - Les commandes lancées en arrière-plan n'ouvrent jamais de fenêtre de mot de passe.
 
+[0.1.1]: https://github.com/mawena/GiGit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/mawena/GiGit/releases/tag/v0.1.0
