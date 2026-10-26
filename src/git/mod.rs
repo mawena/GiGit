@@ -183,3 +183,4 @@ mod tests {
     }
 }
 pub mod status;
+pub mod log;
