@@ -94,7 +94,7 @@ fn snapshot(repo: &std::path::Path) -> Result<Snapshot, GitError> {
     let status = status::status(repo)?;
     let refs = log::refs(repo)?;
     let commits = log::log(repo, 0, PAGE)?;
-    let layout = crate::graph::layout(&commits);
+    let layout = crate::graph::layout(&commits, &refs);
     let has_more = commits.len() == PAGE;
     Ok(Snapshot { status, refs, commits, layout, has_more })
 }
@@ -218,7 +218,7 @@ mod tests {
         match next(&rx) {
             JobResult::Snapshot(s) => {
                 assert_eq!(s.commits.len(), 1);
-                assert_eq!(s.layout.rows.len(), 1);
+                assert_eq!(s.layout.nodes.len(), 1);
                 assert!(!s.has_more);
                 assert_eq!(s.status.unstaged().count(), 1);
                 assert!(!s.refs.is_empty());

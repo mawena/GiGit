@@ -2,18 +2,14 @@
 
 use std::collections::HashMap;
 
-use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, pos2, vec2};
-use eframe::epaint::CubicBezierShape;
+use eframe::egui::{self, Align2, Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Sense, Stroke, pos2, vec2};
 
 use super::state::AppState;
-use crate::git::log::{Ref, RefKind};
+use crate::git::log::{Commit, Ref, RefKind};
+use crate::graph::GNode;
 use crate::i18n::{self, Lang};
 use crate::theme::{self, Palette};
 use crate::worker::Job;
-
-const ROW_H: f32 = 30.0;
-const LANE_W: f32 = 16.0;
-const GUTTER_PAD: f32 = 14.0;
 
 /// "il y a 5 min" / "5 min ago" style age of `t` relative to `now` (unix seconds).
 pub fn relative_time(lang: Lang, now: i64, t: i64) -> String {
@@ -27,42 +23,104 @@ pub fn relative_time(lang: Lang, now: i64, t: i64) -> String {
     i18n::trf(lang, key, &[("n", &n.to_string())])
 }
 
-fn lane_x(rect: Rect, lane: usize) -> f32 {
-    rect.left() + GUTTER_PAD + lane as f32 * LANE_W
+/// Stable colour index for a branch or author name (FNV-1a).
+pub fn name_hash(name: &str) -> usize {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    (h ^ (h >> 32)) as usize
 }
 
-fn lane_color(p: &Palette, color: usize) -> Color32 {
-    p.lanes[color % p.lanes.len()]
-}
+// Geometry, after ungit (scaled to ~0.85): main nodes r=30, side r=15, 60px per step,
+// 90px per branch column, commit cards on the left of the main line.
+const UNIT: f32 = 52.0;
+const R_MAIN: f32 = 26.0;
+const R_SIDE: f32 = 13.0;
+const SLOT_W: f32 = 78.0;
+const TOP: f32 = 46.0;
+const CARD_H: f32 = 66.0;
+const CARD_GAP: f32 = 22.0;
+const EDGE_W: f32 = 7.0;
 
-fn edge_shape(from: Pos2, to: Pos2, stroke: Stroke) -> egui::Shape {
-    if (from.x - to.x).abs() < 0.5 {
-        egui::Shape::line_segment([from, to], stroke)
-    } else {
-        let mid = (to.y - from.y) * 0.5;
-        let pts = [from, pos2(from.x, from.y + mid), pos2(to.x, to.y - mid), to];
-        CubicBezierShape::from_points_stroke(pts, false, Color32::TRANSPARENT, stroke).into()
+fn branch_color(p: &Palette, name: Option<&str>) -> Color32 {
+    match name {
+        Some(n) => p.lanes[name_hash(n) % p.lanes.len()],
+        None => p.muted,
     }
 }
 
-/// Paints a ref label and returns its width.
-fn chip(painter: &egui::Painter, p: &Palette, at: Pos2, r: &Ref, lane_col: Color32) -> f32 {
-    let font = FontId::proportional(11.5);
-    let (fill, text_col, outline) = match r.kind {
-        RefKind::LocalBranch => (lane_col, p.on_accent, None),
-        RefKind::RemoteBranch => (Color32::TRANSPARENT, lane_col, Some(lane_col)),
-        RefKind::Tag => (p.muted.gamma_multiply(0.35), p.text, None),
-        RefKind::Head => (p.accent, p.on_accent, None),
-    };
-    let label = if r.kind == RefKind::Tag { format!("🏷 {}", r.name) } else { r.name.clone() };
-    let galley = painter.layout_no_wrap(label, font, text_col);
-    let rect = Rect::from_min_size(pos2(at.x, at.y - 9.0), vec2(galley.size().x + 12.0, 18.0));
-    painter.rect_filled(rect, CornerRadius::same(5), fill);
-    if let Some(c) = outline {
-        painter.rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, c), egui::StrokeKind::Inside);
+fn initials(name: &str) -> String {
+    name.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect::<String>().to_uppercase()
+}
+
+struct Geometry {
+    origin: Pos2,
+    card_w: f32,
+    line_x: f32,
+}
+
+impl Geometry {
+    fn center(&self, n: &GNode) -> Pos2 {
+        pos2(self.line_x + n.slot as f32 * SLOT_W, self.origin.y + TOP + n.y * UNIT)
     }
-    painter.galley(pos2(rect.left() + 6.0, rect.center().y - galley.size().y / 2.0), galley, text_col);
-    rect.width()
+    fn radius(n: &GNode) -> f32 {
+        if n.main { R_MAIN } else { R_SIDE }
+    }
+}
+
+/// Commit card on the left of the main line, with an arrow pointing at the node.
+#[allow(clippy::too_many_arguments)]
+fn card(painter: &egui::Painter, p: &Palette, lang: Lang, now: i64, g: &Geometry, center: Pos2, c: &Commit, selected: bool, faded: bool) -> Rect {
+    let rect = Rect::from_min_size(pos2(g.origin.x + 10.0, center.y - CARD_H / 2.0), vec2(g.card_w, CARD_H));
+    let alpha = if faded { 0.85 } else { 1.0 };
+    let fill = p.panel.gamma_multiply(alpha);
+    painter.rect_filled(rect, CornerRadius::same(6), fill);
+    let border = if selected { p.accent } else { p.border };
+    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(if selected { 2.0 } else { 1.0 }, border), egui::StrokeKind::Inside);
+    // arrow
+    let tip = pos2(rect.right() + 9.0, center.y);
+    painter.add(egui::Shape::convex_polygon(
+        vec![pos2(rect.right() - 1.0, center.y - 9.0), tip, pos2(rect.right() - 1.0, center.y + 9.0)],
+        fill,
+        Stroke::NONE,
+    ));
+    // avatar
+    let av = pos2(rect.left() + 28.0, rect.center().y);
+    painter.circle_filled(av, 17.0, p.lanes[name_hash(&c.author) % p.lanes.len()]);
+    painter.text(av, Align2::CENTER_CENTER, initials(&c.author), FontId::new(13.0, FontFamily::Name("semibold".into())), p.on_accent);
+    let text_x = rect.left() + 56.0;
+    let clip = Rect::from_min_max(pos2(text_x, rect.top()), pos2(rect.right() - 10.0, rect.bottom()));
+    let tp = painter.with_clip_rect(clip.intersect(painter.clip_rect()));
+    let title = tp.layout_no_wrap(c.subject.clone(), FontId::new(14.5, FontFamily::Name("semibold".into())), p.text);
+    let title_w = title.size().x;
+    tp.galley(pos2(text_x, rect.top() + 12.0), title, p.text);
+    let by = format!("  {} {}", if lang == Lang::Fr { "par" } else { "by" }, c.author);
+    tp.text(pos2(text_x + title_w, rect.top() + 12.0), Align2::LEFT_TOP, by, FontId::proportional(13.0), p.muted);
+    let meta = format!("{}  |  {}", relative_time(lang, now, c.time), &c.id[..c.id.len().min(8)]);
+    tp.text(pos2(text_x, rect.top() + 38.0), Align2::LEFT_TOP, meta, FontId::proportional(12.5), p.muted);
+    rect
+}
+
+/// Ref labels to the right of a node; returns nothing, purely decorative and clickable via the node.
+fn labels(painter: &egui::Painter, p: &Palette, at: Pos2, refs: &[&Ref], current: Option<&str>) {
+    let mut x = at.x;
+    for r in refs {
+        let is_current = r.kind == RefKind::LocalBranch && Some(r.name.as_str()) == current;
+        let (icon, color, size) = match r.kind {
+            RefKind::LocalBranch if is_current => ("⎇", p.text, 19.0),
+            RefKind::LocalBranch => ("⎇", p.text.gamma_multiply(0.65), 15.0),
+            RefKind::RemoteBranch => ("⎇", p.lanes[3 % p.lanes.len()].gamma_multiply(0.9), 15.0),
+            RefKind::Tag => ("🏷", p.modified.gamma_multiply(0.9), 15.0),
+            RefKind::Head => ("➤", p.accent, 15.0),
+        };
+        let font = if is_current { FontId::new(size, FontFamily::Name("semibold".into())) } else { FontId::proportional(size) };
+        let galley = painter.layout_no_wrap(format!("{icon} {}", r.name), font, color);
+        let w = galley.size().x;
+        painter.galley(pos2(x, at.y - galley.size().y / 2.0), galley, color);
+        x += w + 16.0;
+    }
 }
 
 pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
@@ -73,7 +131,8 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
         ui.centered_and_justified(|ui| ui.spinner());
         return;
     };
-    if snap.commits.is_empty() {
+    let lay = &snap.layout;
+    if lay.nodes.is_empty() {
         ui.centered_and_justified(|ui| ui.label(egui::RichText::new(i18n::tr(lang, "graph.empty")).color(p.muted)));
         return;
     }
@@ -81,91 +140,96 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
     for r in &snap.refs {
         by_commit.entry(r.target.as_str()).or_default().push(r);
     }
-    let head = snap.refs.iter().find(|r| r.kind == RefKind::Head).map(|r| r.target.as_str());
-    let detached = snap.status.branch.head.is_none();
+    let current = snap.status.branch.head.as_deref();
+    let detached = current.is_none();
+    let head_id = snap.refs.iter().find(|r| r.kind == RefKind::Head).map(|r| r.target.clone());
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let gutter = (snap.layout.max_lanes as f32 * LANE_W + GUTTER_PAD).min(260.0);
-    let n = snap.commits.len();
+    let total_h = TOP + lay.height * UNIT + TOP + 40.0;
+    let selected_id = v.selected_commit.clone();
     let mut clicked: Option<String> = None;
-    let mut reached_end = false;
+    let mut near_end = false;
 
-    ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, ROW_H, n, |ui, range| {
-        reached_end = range.end >= n;
-        let mut rects = Vec::with_capacity(range.len());
-        // Pass 1: row backgrounds and text.
-        for i in range.clone() {
-            let c = &snap.commits[i];
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-            let painter = ui.painter();
-            let selected = v.selected_commit.as_deref() == Some(c.id.as_str());
-            if selected {
-                painter.rect_filled(rect, CornerRadius::same(4), p.selection);
-            } else if resp.hovered() {
-                painter.rect_filled(rect, CornerRadius::same(4), p.selection.gamma_multiply(0.5));
-            }
-            let row = &snap.layout.rows[i];
-            let col = lane_color(p, row.color);
-            let mut x = rect.left() + gutter + 6.0;
-            let cy = rect.center().y;
-            for r in by_commit.get(c.id.as_str()).into_iter().flatten() {
-                if r.kind == RefKind::Head && !detached {
-                    continue;
-                }
-                x += chip(painter, p, pos2(x, cy), r, col) + 6.0;
-            }
-            let right = format!("{}   {}", relative_time(lang, now, c.time), &c.id[..c.id.len().min(7)]);
-            let right_galley = painter.layout_no_wrap(right, FontId::proportional(12.0), p.muted);
-            let right_x = rect.right() - right_galley.size().x - 10.0;
-            painter.galley(pos2(right_x, cy - right_galley.size().y / 2.0), right_galley, p.muted);
-            let clip = Rect::from_min_max(pos2(x, rect.top()), pos2(right_x - 12.0, rect.bottom()));
-            painter.with_clip_rect(clip.intersect(painter.clip_rect())).text(
-                pos2(x, cy),
-                Align2::LEFT_CENTER,
-                &c.subject,
-                FontId::proportional(13.5),
-                if selected { p.text } else { p.text.gamma_multiply(0.92) },
-            );
-            let resp = resp.on_hover_text(format!("{}\n{} <{}>", c.subject, c.author, c.email));
-            if resp.clicked() {
-                clicked = Some(c.id.clone());
-            }
-            rects.push(rect);
-        }
-        // Pass 2: edges and nodes on top of every background.
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+        let width = ui.available_width();
+        let card_w = (width * 0.48).clamp(300.0, 560.0);
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, total_h), Sense::click());
+        let g = Geometry { origin: rect.min, card_w, line_x: rect.min.x + 10.0 + card_w + CARD_GAP + R_MAIN };
         let painter = ui.painter();
-        if let (Some(first), true) = (rects.first(), range.start > 0) {
-            let prev = &snap.layout.rows[range.start - 1];
-            let y0 = first.center().y - ROW_H;
-            for e in &prev.edges {
-                let stroke = Stroke::new(2.0, lane_color(p, e.color));
-                painter.add(edge_shape(pos2(lane_x(*first, e.from_lane), y0), pos2(lane_x(*first, e.to_lane), first.center().y), stroke));
+        let visible = viewport.translate(rect.min.to_vec2()).expand(UNIT * 2.0);
+        near_end = viewport.max.y > total_h - 900.0;
+        let in_view = |y: f32| y >= visible.top() && y <= visible.bottom();
+        let edge_col = p.muted.gamma_multiply(0.45);
+
+        // Edges first, straight like ungit.
+        for e in &lay.edges {
+            let (a, b) = (g.center(&lay.nodes[e.from]), g.center(&lay.nodes[e.to]));
+            if b.y < visible.top() || a.y > visible.bottom() {
+                continue;
+            }
+            painter.line_segment([a, b], Stroke::new(EDGE_W, edge_col));
+        }
+
+        let pointer = ui.input(|i| i.pointer.hover_pos());
+        let mut hovered: Option<usize> = None;
+        for (k, n) in lay.nodes.iter().enumerate() {
+            let c = g.center(n);
+            if !in_view(c.y) {
+                continue;
+            }
+            let r = Geometry::radius(n);
+            if pointer.is_some_and(|pt| pt.distance(c) <= r + 3.0) && resp.hovered() {
+                hovered = Some(k);
             }
         }
-        for (k, i) in range.clone().enumerate() {
-            let rect = rects[k];
-            let row = &snap.layout.rows[i];
-            let cy = rect.center().y;
-            if i + 1 < n {
-                for e in &row.edges {
-                    let stroke = Stroke::new(2.0, lane_color(p, e.color));
-                    painter.add(edge_shape(pos2(lane_x(rect, e.from_lane), cy), pos2(lane_x(rect, e.to_lane), cy + ROW_H), stroke));
+
+        // Cards: main line always, others on hover or when selected.
+        for (k, n) in lay.nodes.iter().enumerate() {
+            let c = g.center(n);
+            if !in_view(c.y) {
+                continue;
+            }
+            let commit = &snap.commits[n.commit];
+            let selected = selected_id.as_deref() == Some(commit.id.as_str());
+            if n.main || selected || hovered == Some(k) {
+                let card_rect = card(painter, p, lang, now, &g, pos2(c.x, c.y), commit, selected, !n.main);
+                if resp.clicked() && pointer.is_some_and(|pt| card_rect.contains(pt)) {
+                    clicked = Some(commit.id.clone());
+                }
+                if !n.main {
+                    // connector from the card arrow to a side node
+                    painter.line_segment([pos2(card_rect.right() + 9.0, c.y), c], Stroke::new(1.0, p.border));
                 }
             }
         }
-        for (k, i) in range.clone().enumerate() {
-            let rect = rects[k];
-            let row = &snap.layout.rows[i];
-            let center = pos2(lane_x(rect, row.lane), rect.center().y);
-            let col = lane_color(p, row.color);
-            if head == Some(snap.commits[i].id.as_str()) {
-                painter.circle_filled(center, 6.0, p.bg);
-                painter.circle_stroke(center, 6.5, Stroke::new(2.0, p.accent));
-                painter.circle_filled(center, 3.5, col);
-            } else {
-                painter.circle_filled(center, 4.5, col);
-                painter.circle_stroke(center, 4.5, Stroke::new(1.5, p.bg));
+
+        // Nodes and labels.
+        for (k, n) in lay.nodes.iter().enumerate() {
+            let c = g.center(n);
+            if !in_view(c.y) {
+                continue;
             }
+            let commit = &snap.commits[n.commit];
+            let r = Geometry::radius(n);
+            let col = branch_color(p, n.branch.as_deref());
+            painter.circle_filled(c, r, col);
+            let selected = selected_id.as_deref() == Some(commit.id.as_str());
+            if selected || hovered == Some(k) {
+                painter.circle_stroke(c, r - 4.0, Stroke::new(4.0, p.bg));
+            }
+            if head_id.as_deref() == Some(commit.id.as_str()) {
+                painter.circle_stroke(c, r + 4.0, Stroke::new(2.5, p.accent));
+            }
+            if let Some(refs) = by_commit.get(commit.id.as_str()) {
+                let shown: Vec<&Ref> =
+                    refs.iter().copied().filter(|r| r.kind != RefKind::Head || detached).collect();
+                labels(painter, p, pos2(c.x + r + 14.0, c.y), &shown, current);
+            }
+            if resp.clicked() && hovered == Some(k) {
+                clicked = Some(commit.id.clone());
+            }
+        }
+        if hovered.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
     });
 
@@ -179,9 +243,9 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
             v.worker.send(Job::Show { id });
         }
     }
-    if reached_end && snap.has_more && !v.loading_more {
+    if near_end && snap.has_more && !v.loading_more {
         v.loading_more = true;
-        v.worker.send(Job::LoadMore { skip: n });
+        v.worker.send(Job::LoadMore { skip: snap.commits.len() });
     }
 }
 
@@ -198,5 +262,13 @@ mod tests {
         assert_eq!(relative_time(Lang::Fr, now, now - 2 * 86400), "il y a 2 j");
         // future timestamps (clock skew) read as "just now"
         assert_eq!(relative_time(Lang::En, now, now + 100), "just now");
+    }
+
+    #[test]
+    fn name_hash_is_stable_and_spreads() {
+        assert_eq!(name_hash("main"), name_hash("main"));
+        let distinct: std::collections::HashSet<usize> =
+            ["main", "develop", "feature/a", "feature/b", "origin/main", "v1"].iter().map(|n| name_hash(n) % 8).collect();
+        assert!(distinct.len() >= 4, "{distinct:?}");
     }
 }

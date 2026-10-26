@@ -254,7 +254,7 @@ impl AppState {
                 if let Some(snap) = v.snapshot.as_mut() {
                     snap.has_more = commits.len() == PAGE;
                     snap.commits.extend(commits);
-                    snap.layout = graph::layout(&snap.commits);
+                    snap.layout = graph::layout(&snap.commits, &snap.refs);
                 }
             }
             JobResult::Diff { path: file, side, diff } => {
