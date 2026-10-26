@@ -49,7 +49,7 @@ pub fn resolve(choice: LangChoice) -> Lang {
 }
 
 /// Translated string for `key`; the key itself when missing.
-pub fn tr<'a>(lang: Lang, key: &'a str) -> &'a str {
+pub fn tr(lang: Lang, key: &str) -> &str {
     let table = match lang {
         Lang::Fr => &*FR,
         Lang::En => &*EN,
