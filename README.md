@@ -48,11 +48,16 @@ GiGit lance la commande `git` installée sur ta machine. Ta configuration, tes h
 
 ## Installation
 
-### Paquet Debian / Ubuntu
+### Paquet Debian / Ubuntu (recommandé)
+
+Télécharge le `.deb` de la [dernière release](https://github.com/mawena/GiGit/releases/latest), puis installe-le :
 
 ```bash
+wget https://github.com/mawena/GiGit/releases/download/v0.1.0/gigit_0.1.0-1_amd64.deb
 sudo apt install ./gigit_0.1.0-1_amd64.deb
 ```
+
+Pour désinstaller : `sudo apt remove gigit`. Tes réglages restent dans `~/.config/gigit/`.
 
 GiGit apparaît ensuite dans le menu des applications (catégorie Développement).
 
@@ -149,7 +154,10 @@ GiGit runs your installed `git` binary, so your configuration, hooks, SSH agent 
 
 ### Install
 
+Download the `.deb` from the [latest release](https://github.com/mawena/GiGit/releases/latest), then:
+
 ```bash
+wget https://github.com/mawena/GiGit/releases/download/v0.1.0/gigit_0.1.0-1_amd64.deb
 sudo apt install ./gigit_0.1.0-1_amd64.deb
 ```
 
