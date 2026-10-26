@@ -379,3 +379,23 @@ fn unstage_line_in_repeated_block_hits_the_right_one() {
     assert!(staged.find("NEW").unwrap() < staged.find("m0").unwrap());
     assert_eq!(staged.matches("NEW").count(), 1);
 }
+
+#[test]
+fn force_push_keeps_fetched_but_unseen_remote_commits() {
+    let (_d, repo, _b, bare) = repo_with_origin();
+    // A collaborator pushes a commit; autofetch brings it into origin/main without merging it.
+    let other_dir = tempfile::TempDir::new().unwrap();
+    let other = other_dir.path().join("clone");
+    git(other_dir.path(), &["clone", "-q", bare.to_str().unwrap(), "clone"]);
+    git(&other, &["config", "user.name", "O"]);
+    git(&other, &["config", "user.email", "o@x"]);
+    write(&other, "theirs.txt", "precious\n");
+    commit_all(&other, "collaborator work");
+    git(&other, &["push", "-q"]);
+    fetch(&repo, true).unwrap();
+    commit(&repo, "rewritten", true).unwrap();
+    let br = status(&repo).unwrap().branch;
+    assert!(push(&repo, &br, true).is_err(), "force push must not overwrite unseen remote commits");
+    let remote_log = git(&bare, &["log", "--format=%s", "main"]);
+    assert!(remote_log.contains("collaborator work"));
+}

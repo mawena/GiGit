@@ -51,6 +51,14 @@ fn build_command(repo: &Path, args: &[&str], opts: &RunOpts) -> Command {
     if opts.read_only {
         cmd.env("GIT_OPTIONAL_LOCKS", "0");
     }
+    if opts.background {
+        // Nobody asked for this command: never pop up a password dialog (desktop askpass helpers,
+        // an editor's GIT_ASKPASS, Git Credential Manager…).
+        cmd.env("GIT_ASKPASS", "false")
+            .env("SSH_ASKPASS", "false")
+            .env("SSH_ASKPASS_REQUIRE", "never")
+            .env("GCM_INTERACTIVE", "never");
+    }
     // Detach from any controlling terminal so ssh cannot prompt on a tty.
     unsafe {
         cmd.pre_exec(|| {
@@ -168,6 +176,18 @@ mod tests {
         assert_eq!(env_of(&plain, "GIT_LITERAL_PATHSPECS").as_deref(), Some("1"));
         let ro = build_command(p, &["status"], &RunOpts { read_only: true, ..Default::default() });
         assert_eq!(env_of(&ro, "GIT_OPTIONAL_LOCKS").as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn background_commands_never_ask_for_credentials() {
+        let p = Path::new("/");
+        let bg = build_command(p, &["fetch"], &RunOpts { background: true, ..Default::default() });
+        for (k, v) in [("GIT_ASKPASS", "false"), ("SSH_ASKPASS", "false"), ("SSH_ASKPASS_REQUIRE", "never"), ("GCM_INTERACTIVE", "never")] {
+            assert_eq!(env_of(&bg, k).as_deref(), Some(v), "{k}");
+        }
+        // User-initiated commands keep the user's own askpass helpers.
+        let fg = build_command(p, &["push"], &RunOpts::default());
+        assert_eq!(env_of(&fg, "GIT_ASKPASS"), None);
     }
 
     #[test]

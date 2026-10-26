@@ -143,7 +143,9 @@ pub fn push(repo: &Path, branch: &BranchInfo, force: bool) -> Result<(), GitErro
     };
     let mut args = vec!["push".to_string()];
     if force {
-        args.push("--force-with-lease".into());
+        // The lease alone compares with origin/*, which autofetch keeps fresh; --force-if-includes
+        // also requires those remote commits to have been integrated locally.
+        args.extend(["--force-with-lease".into(), "--force-if-includes".into()]);
     }
     if branch.upstream.is_none() {
         args.extend(["-u".into(), push_remote(repo, head)?, head.to_string()]);
