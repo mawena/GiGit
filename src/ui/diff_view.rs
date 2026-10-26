@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align2, Color32, FontId, RichText, Sense, pos2, vec2};
 
-use super::state::{AppState, Pending};
+use super::state::AppState;
 use crate::git::diff::{DiffSide, FileDiff, LineKind};
 use crate::git::patch::LineSel;
 use crate::theme::{self, Palette};
@@ -222,7 +222,7 @@ pub fn show_file(state: &mut AppState, ui: &mut egui::Ui) {
                 Some(DiffAction::Stage(s)) => Some(Job::StageLines(diff.clone(), s)),
                 Some(DiffAction::Unstage(s)) => Some(Job::UnstageLines(diff.clone(), s)),
                 Some(DiffAction::Discard(s)) => {
-                    state.pending = Some(Pending::Confirm { text_key: "confirm.discard", action: Job::DiscardLines(diff.clone(), s) });
+                    state.confirm("confirm.discard", Job::DiscardLines(diff.clone(), s));
                     None
                 }
                 None => None,

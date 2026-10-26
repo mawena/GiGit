@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, RichText};
 
-use super::state::{AppState, Pending};
+use super::state::AppState;
 use crate::git::diff::DiffSide;
 use crate::git::log::RefKind;
 use crate::git::status::{FileEntry, FileState};
@@ -194,7 +194,7 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
                         }
                     }
                     Action::Job(j) => state.send(j),
-                    Action::Confirm(j) => state.pending = Some(Pending::Confirm { text_key: "confirm.discard", action: j }),
+                    Action::Confirm(j) => state.confirm("confirm.discard", j),
                 }
             }
         });

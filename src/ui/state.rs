@@ -46,7 +46,8 @@ pub struct RepoBadge {
 
 #[derive(Debug, Clone)]
 pub enum Pending {
-    Confirm { text_key: &'static str, action: Job },
+    /// `repo` is the repository the action was confirmed for; it never runs anywhere else.
+    Confirm { repo: PathBuf, text_key: &'static str, action: Job },
     InitRepo(PathBuf),
 }
 
@@ -120,6 +121,10 @@ impl AppState {
     }
 
     pub fn open_repo(&mut self, p: PathBuf) {
+        // A confirmation belongs to the repository it was asked for.
+        if matches!(self.pending, Some(Pending::Confirm { .. })) {
+            self.pending = None;
+        }
         let worker = RepoWorker::spawn(p.clone(), self.results_tx.clone(), self.wake.clone());
         let jobs = worker.sender();
         let watch = watch::spawn_watcher(&p, move || {
@@ -312,6 +317,30 @@ impl AppState {
         self.save_config();
     }
 
+    /// Asks for confirmation before running `action` on the open repository.
+    pub fn confirm(&mut self, text_key: &'static str, action: Job) {
+        if let Some(v) = &self.open {
+            self.pending = Some(Pending::Confirm { repo: v.path.clone(), text_key, action });
+        }
+    }
+
+    /// Resolves the pending dialog. A confirmed action only runs on the repository it was
+    /// confirmed for.
+    pub fn answer_pending(&mut self, yes: bool) {
+        let Some(pending) = self.pending.take() else { return };
+        if !yes {
+            return;
+        }
+        match pending {
+            Pending::Confirm { repo, action, .. } => {
+                if self.open.as_ref().is_some_and(|v| v.path == repo) {
+                    self.send(action);
+                }
+            }
+            Pending::InitRepo(path) => self.init_and_add(path),
+        }
+    }
+
     pub fn tr<'a>(&self, key: &'a str) -> &'a str {
         i18n::tr(self.lang, key)
     }
@@ -478,5 +507,68 @@ mod tests {
         assert_eq!(s.lang, Lang::En);
         assert_eq!(s.tr("repos.add"), "Add a folder");
         assert_eq!(Config::load(&s.config_path).language, crate::i18n::LangChoice::En);
+    }
+
+    fn modified_repo() -> (tempfile::TempDir, PathBuf) {
+        let (d, repo) = temp_repo();
+        write(&repo, "f", "1\n");
+        commit_all(&repo, "init");
+        write(&repo, "f", "2\n");
+        (d, repo)
+    }
+
+    fn discard_f() -> Job {
+        Job::Discard(vec![crate::git::status::FileEntry {
+            path: "f".into(),
+            orig_path: None,
+            index: crate::git::status::FileState::Unmodified,
+            worktree: crate::git::status::FileState::Modified,
+            conflicted: false,
+        }])
+    }
+
+    #[test]
+    fn switching_repo_drops_pending_confirmation() {
+        let (_d, mut s) = state();
+        let (_a, a) = modified_repo();
+        let (_b, b) = modified_repo();
+        s.add_folder(a);
+        s.confirm("confirm.discard", discard_f());
+        assert!(matches!(&s.pending, Some(Pending::Confirm { .. })));
+        s.add_folder(b);
+        assert!(s.pending.is_none());
+    }
+
+    #[test]
+    fn confirmed_action_never_runs_on_another_repo() {
+        let (_d, mut s) = state();
+        let (_a, a) = modified_repo();
+        let (_b, b) = modified_repo();
+        s.add_folder(a.clone());
+        let a_root = s.open.as_ref().unwrap().path.clone();
+        s.add_folder(b.clone());
+        // A confirmation created for A while B is open (e.g. a switch raced the dialog).
+        s.pending = Some(Pending::Confirm { repo: a_root, text_key: "confirm.discard", action: discard_f() });
+        s.answer_pending(true);
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(std::fs::read_to_string(b.join("f")).unwrap(), "2\n");
+        assert_eq!(std::fs::read_to_string(a.join("f")).unwrap(), "2\n");
+        assert!(s.pending.is_none());
+    }
+
+    #[test]
+    fn confirmed_action_runs_on_its_repo() {
+        let (_d, mut s) = state();
+        let (_a, a) = modified_repo();
+        s.add_folder(a.clone());
+        s.confirm("confirm.discard", discard_f());
+        s.answer_pending(true);
+        for _ in 0..100 {
+            if std::fs::read_to_string(a.join("f")).unwrap() == "1\n" {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("discard did not run");
     }
 }

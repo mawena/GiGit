@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, RichText};
 
-use super::state::{AppState, Pending};
+use super::state::AppState;
 use crate::theme;
 use crate::worker::Job;
 
@@ -76,6 +76,6 @@ pub fn show(state: &mut AppState, ui: &mut egui::Ui) {
         state.send(j);
     }
     if force {
-        state.pending = Some(Pending::Confirm { text_key: "confirm.force_push", action: Job::Push { force: true } });
+        state.confirm("confirm.force_push", Job::Push { force: true });
     }
 }

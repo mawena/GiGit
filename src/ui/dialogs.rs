@@ -89,12 +89,6 @@ pub fn pending(state: &mut AppState, ctx: &egui::Context) {
         decision = Some(false);
     }
     if let Some(yes) = decision {
-        state.pending = None;
-        if yes {
-            match pending {
-                Pending::Confirm { action, .. } => state.send(action),
-                Pending::InitRepo(path) => state.init_and_add(path),
-            }
-        }
+        state.answer_pending(yes);
     }
 }
