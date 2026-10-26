@@ -11,4 +11,3 @@ Terminal=false
 Categories=Development;RevisionControl;
 Keywords=git;version;control;ungit;
 StartupWMClass=gigit
-MimeType=inode/directory;
