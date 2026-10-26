@@ -187,3 +187,4 @@ mod tests {
 pub mod status;
 pub mod log;
 pub mod diff;
+pub mod patch;
